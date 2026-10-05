@@ -1,0 +1,45 @@
+{
+  "name": "@ai-ecoverse/slicc-ortllama",
+  "version": "0.0.0",
+  "description": "Built-in ort-llama server: ONNX Runtime with models from OPFS and OpenAI-compatible APIs on a fake localhost",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ai-ecoverse/slicc-ortllama.git"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "fledgling": {
+    "provider": "github",
+    "workflow": "release.yml",
+    "repo": "ai-ecoverse/slicc-ortllama",
+    "publish": true
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "prepare": "lefthook install",
+    "lint": "slicc-lint",
+    "format": "biome check --write .",
+    "test": "true",
+    "trust": "npx fledgling sync -y --skip-publish",
+    "trust:dry": "npx fledgling sync --dry-run -y --skip-publish",
+    "release": "semantic-release"
+  },
+  "devDependencies": {
+    "@ai-ecoverse/slicc-shared-web": "1.1.0",
+    "@biomejs/biome": "2.5.15",
+    "lefthook": "2.1.16",
+    "semantic-release": "25.0.9"
+  }
+}
