@@ -37,7 +37,7 @@
     "release": "semantic-release"
   },
   "devDependencies": {
-    "@ai-ecoverse/slicc-shared-web": "1.12.3",
+    "@ai-ecoverse/slicc-shared-web": "1.13.0",
     "@biomejs/biome": "2.5.15",
     "lefthook": "2.1.17",
     "semantic-release": "25.0.9"
