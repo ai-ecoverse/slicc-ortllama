@@ -4,6 +4,29 @@ export function defaultProviders(platform = process.platform, arch = process.arc
   return platform === 'linux' && arch === 'arm64' ? ['cpu'] : ['webgpu', 'cpu'];
 }
 
+function binaryHalf(tensor) {
+  const data = tensor.location === 'cpu' && tensor.type === 'float16' ? tensor.data : null;
+  if (!data || data instanceof Uint16Array) return tensor;
+  const view = new Uint16Array(data.buffer, data.byteOffset, data.length);
+  return Object.defineProperty(Object.create(tensor), 'data', { value: view });
+}
+
+export function withHalfInputs(ort) {
+  const wrap = (session) =>
+    Object.assign(Object.create(session), {
+      run(feeds, ...rest) {
+        const fixed = Object.fromEntries(Object.entries(feeds).map(([k, t]) => [k, binaryHalf(t)]));
+        return session.run(fixed, ...rest);
+      },
+    });
+  return {
+    ...ort,
+    InferenceSession: {
+      create: async (...args) => wrap(await ort.InferenceSession.create(...args)),
+    },
+  };
+}
+
 export async function loadBackend({
   env = process.env,
   importOrt = () => import('onnxruntime-node'),
@@ -20,7 +43,7 @@ export async function loadBackend({
   }
   ort.env.logLevel = env.ORTLLAMA_ORT_LOG_LEVEL ?? 'error';
   return {
-    ort,
+    ort: withHalfInputs(ort),
     track: 'node',
     executionProviders: providersFrom(env, defaultProviders(platform, arch)),
     fallbackProviders: ['cpu'],

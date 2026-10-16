@@ -13,6 +13,7 @@ export const ROLES = [
 ];
 
 export const DEFAULT_ALIASES = {
+  chat: 'mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16',
   decisions: 'ai-ecoverse/kev.js/kev-0.8b:q8f32',
   transcribe: 'onnx-community/whisper-tiny',
   'realtime-transcribe': 'onnx-community/whisper-tiny',

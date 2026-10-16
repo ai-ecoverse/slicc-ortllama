@@ -6,6 +6,8 @@ function abortError(signal) {
     : new DOMException('the request was aborted', 'AbortError');
 }
 
+const noop = () => {};
+
 export class Runtime {
   constructor({
     loadBackend,
@@ -34,10 +36,10 @@ export class Runtime {
     return this.backendPromise;
   }
 
-  run(priority, task, signal) {
+  run(priority, task, signal, key = null) {
     if (signal?.aborted) return Promise.reject(abortError(signal));
     return new Promise((resolve, reject) => {
-      const job = { priority, seq: this.seq++, task, resolve, reject, signal };
+      const job = { priority, seq: this.seq++, task, resolve, reject, signal, key };
       job.onAbort = () => {
         this.queue.splice(this.queue.indexOf(job), 1);
         reject(abortError(signal));
@@ -48,34 +50,72 @@ export class Runtime {
     });
   }
 
+  fits(job) {
+    const entries = [...this.loaded.values()];
+    if (!job.key || this.loaded.has(job.key) || !entries.some((e) => e.busy > 0)) return true;
+    return entries.filter((e) => e.busy > 0 || e.pins > 0).length < this.maxLoaded;
+  }
+
   pump() {
-    if (this.running || this.queue.length === 0) return;
+    if (this.running) return;
     this.queue.sort((a, b) => a.priority - b.priority || a.seq - b.seq);
-    const job = this.queue.shift();
+    const at = this.queue.findIndex((j) => this.fits(j));
+    if (at < 0) return;
+    const [job] = this.queue.splice(at, 1);
     job.signal?.removeEventListener('abort', job.onAbort);
     this.running = true;
+    const turn = this.turn(job.priority);
     Promise.resolve()
-      .then(() => job.task(job.signal))
+      .then(() => job.task(job.signal, turn))
       .then(job.resolve, job.reject)
-      .finally(() => {
+      .finally(() => turn.end());
+  }
+
+  turn(priority) {
+    const turn = {
+      end: () => {
         this.running = false;
         this.pump();
-      });
+      },
+      yield: () => {
+        if (!this.queue.some((j) => j.priority < priority && this.fits(j)))
+          return Promise.resolve();
+        const release = turn.end;
+        return new Promise((resume) => {
+          this.queue.push({
+            priority,
+            seq: -1,
+            task: () =>
+              new Promise((done) => {
+                turn.end = done;
+                resume();
+              }),
+            resolve: noop,
+            reject: noop,
+          });
+          release();
+        });
+      },
+    };
+    return turn;
   }
 
   use(resolved, priority, fn, signal) {
     return this.run(
       priority,
-      async () => {
+      async (_signal, turn) => {
         const entry = await this.acquire(resolved);
+        entry.busy++;
         try {
           if (signal?.aborted) throw abortError(signal);
-          return await fn(entry.instance, entry);
+          return await fn(entry.instance, entry, () => turn.yield());
         } finally {
+          entry.busy--;
           this.touch(entry);
         }
       },
-      signal
+      signal,
+      resolved.key
     );
   }
 
@@ -90,7 +130,8 @@ export class Runtime {
         entry.expiresAt = null;
         return entry;
       },
-      signal
+      signal,
+      resolved.key
     );
   }
 
@@ -106,7 +147,8 @@ export class Runtime {
       existing.generation++;
       return existing;
     }
-    await this.evict(this.maxLoaded - 1);
+    const fixed = [...this.loaded.values()].filter((e) => e.busy > 0 || e.pins > 0).length;
+    await this.evict(this.maxLoaded - 1 - fixed);
     const backend = await this.backend();
     const started = this.now();
     let executionProviders = backend.executionProviders;
@@ -143,6 +185,7 @@ export class Runtime {
       expiresAt: null,
       generation: 0,
       pins: 0,
+      busy: 0,
     };
     this.loaded.set(resolved.key, entry);
     return entry;
@@ -163,14 +206,19 @@ export class Runtime {
   }
 
   async expire(entry, generation) {
-    if (this.loaded.get(entry.key) !== entry || entry.generation !== generation || entry.pins > 0)
+    if (
+      this.loaded.get(entry.key) !== entry ||
+      entry.generation !== generation ||
+      entry.pins > 0 ||
+      entry.busy > 0
+    )
       return false;
     return this.unload(entry.key);
   }
 
   async evict(keep) {
     const byAge = [...this.loaded.values()]
-      .filter((entry) => entry.pins === 0)
+      .filter((entry) => entry.pins === 0 && entry.busy === 0)
       .sort((a, b) => a.lastUsed - b.lastUsed);
     while (byAge.length > Math.max(0, keep)) await this.unload(byAge.shift().key);
   }

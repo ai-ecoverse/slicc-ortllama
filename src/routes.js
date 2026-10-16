@@ -1,3 +1,4 @@
+import { chatRoute } from './chat.js';
 import { badRequest } from './http/errors.js';
 import { PRIORITY } from './runtime.js';
 import { transcriptionRoutes } from './transcription.js';
@@ -36,6 +37,7 @@ export function createRoutes({ catalog, runtime, version }) {
       },
     },
     'GET /ortllama/ps': { handle: () => ({ models: runtime.ps() }) },
+    'POST /v1/chat/completions': chatRoute({ catalog, runtime }),
     'POST /v1/systemone': {
       async handle({ body, signal }) {
         if (typeof body !== 'object' || body === null || Array.isArray(body))
