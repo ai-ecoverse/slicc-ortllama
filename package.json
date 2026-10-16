@@ -39,6 +39,7 @@
     "test:unit": "mcr -c node_modules/@ai-ecoverse/slicc-shared-web/mcr.config.mjs node --test 'test/unit/**/*.test.mjs'"
   },
   "devDependencies": {
+    "@ai-ecoverse/kev.js": "1.0.0",
     "@ai-ecoverse/pi-audio": "1.27.0",
     "@ai-ecoverse/slicc-shared-web": "1.22.1",
     "@biomejs/biome": "2.5.15",
@@ -48,7 +49,6 @@
     "semantic-release": "25.0.9"
   },
   "dependencies": {
-    "@ai-ecoverse/kev.js": "1.0.0",
     "@huggingface/jinja": "0.5.10",
     "@huggingface/tokenizers": "0.2.0",
     "onnxruntime-web": "1.30.0"
@@ -63,9 +63,13 @@
     }
   },
   "peerDependencies": {
+    "@ai-ecoverse/kev.js": "1.0.0",
     "onnxruntime-node": "1.30.0"
   },
   "peerDependenciesMeta": {
+    "@ai-ecoverse/kev.js": {
+      "optional": true
+    },
     "onnxruntime-node": {
       "optional": true
     }

@@ -10,7 +10,7 @@ The plan and milestones are in [#2](https://github.com/ai-ecoverse/slicc-ortllam
 ## Use
 
 ```sh
-npm install -g @ai-ecoverse/slicc-ortllama onnxruntime-node
+npm install -g @ai-ecoverse/slicc-ortllama onnxruntime-node @ai-ecoverse/kev.js
 hf download ai-ecoverse/kev.js --include 'kev-0.8b/*'
 hf download mistralai/Ministral-3-3B-Instruct-2512-ONNX --include '*.json' chat_template.jinja 'onnx/decoder_model_merged_q4f16.onnx*' 'onnx/embed_tokens_q4f16.onnx*'
 ortllama serve
@@ -76,6 +76,8 @@ Whisper models are the transformers.js ONNX exports (`config.json` with `model_t
 
 Engines are picked by the files a model has, not by its name. The decoder engine runs the transformers.js layout (`onnx/decoder_model_merged*.onnx` with `embed_tokens*.onnx`, or `onnx/model*.onnx`; variants are its quantizations, such as `q4f16`) and the onnxruntime-genai layout (`genai_config.json`, one variant per folder), with the model's own chat template. A small profile per family, chosen from the template, parses tool calls and reasoning; Mistral's `[TOOL_CALLS]name[ARGS]{…}` and `[THINK]…[/THINK]` are built in, and control-token names in client text are escaped so they cannot inject one. Each engine in `src/engines/` gets ONNX Runtime from the caller and provides `detect`, `missing`, `include`, `load`, `checkOverrides` and `check`.
 
+Model-specific libraries are never installed with ortllama. They are devDependencies here, and engines load them only when a model needs them, such as `@ai-ecoverse/kev.js` for System One. ortllama looks for each library next to itself, then in `ORTLLAMA_MODULE_PATH` (project folders that contain a `node_modules`), then in pnpm's global installs (`$PNPM_HOME/global/…`, including slicc-kernel's `/usr/local/share/pnpm`). A model whose library is missing is still listed, and requests for it answer `501` with code `engine_unavailable` and the package to install.
+
 ## Configuration
 
 | Variable | Default | |
@@ -89,6 +91,7 @@ Engines are picked by the files a model has, not by its name. The decoder engine
 | `ORTLLAMA_MAX_LOADED` | `1` | models kept loaded at once |
 | `ORTLLAMA_EP` | `webgpu,cpu` on Node, `webgpu,wasm` in the browser | execution providers, in order |
 | `ORTLLAMA_MODEL_PATH` | none | extra plain folders, listed as `local/<name>` |
+| `ORTLLAMA_MODULE_PATH` | none | project folders searched for model libraries such as `@ai-ecoverse/kev.js` |
 | `ORTLLAMA_ORT_LOG_LEVEL` | `error` | ONNX Runtime's log level |
 
 ## Develop

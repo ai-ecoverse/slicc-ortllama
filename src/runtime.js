@@ -162,7 +162,7 @@ export class Runtime {
       });
     } catch (error) {
       const fallback = backend.fallbackProviders;
-      if (!fallback || fallback.join() === executionProviders.join()) throw error;
+      if (error.status || !fallback || fallback.join() === executionProviders.join()) throw error;
       executionProviders = fallback;
       instance = await resolved.engine.load({
         backend: { ...backend, executionProviders },
