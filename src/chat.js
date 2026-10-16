@@ -53,6 +53,9 @@ function messages(list) {
       return {
         role: 'assistant',
         content: content(m.content, at, { nullable: true }),
+        ...(typeof m.reasoning_content === 'string'
+          ? { reasoning_content: m.reasoning_content }
+          : {}),
         ...(calls ? { tool_calls: calls } : {}),
       };
     }

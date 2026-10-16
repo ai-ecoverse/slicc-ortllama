@@ -44,7 +44,13 @@ function merged(messages) {
   return out;
 }
 
-function chatMessages(messages, escape) {
+function assistantText(m, escape, markers) {
+  const text = escape.escape(textOf(m.content));
+  const thought = markers.think && m.reasoning_content ? escape.escape(m.reasoning_content) : '';
+  return thought ? `${markers.think}${thought}${markers.thinkEnd}${text}` : text;
+}
+
+function chatMessages(messages, escape, markers = {}) {
   const system = [];
   let i = 0;
   for (; i < messages.length && ['system', 'developer'].includes(messages[i].role); i++)
@@ -53,11 +59,11 @@ function chatMessages(messages, escape) {
     if (m.role === 'assistant')
       return {
         role: 'assistant',
-        content: escape.escape(textOf(m.content)),
+        content: assistantText(m, escape, markers),
         ...(m.tool_calls?.length
           ? {
               tool_calls: m.tool_calls.map((c) => ({
-                id: c.id,
+                id: escape.escape(c.id),
                 type: 'function',
                 function: {
                   name: escape.escape(c.function.name),
@@ -70,7 +76,7 @@ function chatMessages(messages, escape) {
     if (m.role === 'tool')
       return {
         role: 'tool',
-        tool_call_id: m.tool_call_id,
+        tool_call_id: escape.escape(m.tool_call_id),
         content: escape.escape(textOf(m.content)),
       };
     return { role: 'user', content: escape.escape(textOf(m.content)) };
@@ -95,7 +101,9 @@ export const mistral = {
       first.pattern = { Regex: MISTRAL_SPLIT };
     return json;
   },
-  messages: chatMessages,
+  messages(messages, escape) {
+    return chatMessages(messages, escape, this.markers);
+  },
 };
 
 export const plain = {

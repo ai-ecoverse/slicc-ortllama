@@ -113,11 +113,10 @@ export async function openModel({ backend, files, part, shape }) {
     return out[embed.outputNames[0]];
   }
 
-  async function forward(ids, past, pastLen, wantLogits) {
+  function feedsFor(ids, pastLen) {
     const n = ids.length;
-    const feeds = { ...past };
+    const feeds = {};
     if (inputs.has('input_ids')) feeds.input_ids = ids64(ids);
-    if (inputs.has('inputs_embeds')) feeds.inputs_embeds = await embeddings(ids);
     if (inputs.has('attention_mask'))
       feeds.attention_mask = new ort.Tensor('int64', new BigInt64Array(pastLen + n).fill(1n), [
         1,
@@ -131,22 +130,35 @@ export async function openModel({ backend, files, part, shape }) {
       );
     if (inputs.has('num_logits_to_keep'))
       feeds.num_logits_to_keep = new ort.Tensor('int64', BigInt64Array.from([1n]), []);
-    const out = await decoder.run(feeds, fetches);
-    feeds.inputs_embeds?.dispose?.();
-    dispose(past);
-    const next = {};
-    for (const name of pasts) next[name] = out[presentOf(name)];
-    const tensor = out.logits;
-    if (!wantLogits) {
-      tensor.dispose?.();
-      return { past: next, logits: null };
-    }
+    return feeds;
+  }
+
+  async function lastRow(tensor) {
     const data = await tensor.getData();
     const vocab = tensor.dims.at(-1);
     const rows = data.length / vocab;
-    const logits = toFloat32(data.subarray((rows - 1) * vocab, rows * vocab));
-    tensor.dispose?.();
-    return { past: next, logits };
+    return toFloat32(data.subarray((rows - 1) * vocab, rows * vocab));
+  }
+
+  async function forward(ids, past, pastLen, wantLogits) {
+    const feeds = feedsFor(ids, pastLen);
+    let out = null;
+    try {
+      if (inputs.has('inputs_embeds')) feeds.inputs_embeds = await embeddings(ids);
+      out = await decoder.run({ ...feeds, ...past }, fetches);
+      const logits = wantLogits ? await lastRow(out.logits) : null;
+      const next = {};
+      for (const name of pasts) next[name] = out[presentOf(name)];
+      out.logits.dispose?.();
+      dispose(past);
+      return { past: next, logits };
+    } catch (error) {
+      dispose(past);
+      if (out) dispose(out);
+      throw error;
+    } finally {
+      feeds.inputs_embeds?.dispose?.();
+    }
   }
 
   let slicer = null;

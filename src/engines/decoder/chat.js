@@ -131,13 +131,20 @@ export function createChat({
     return state;
   }
 
+  async function advance(run, ids, wantLogits) {
+    const past = run.past;
+    run.past = null;
+    const out = await model.forward(ids, past, run.seq.length, wantLogits);
+    run.past = out.past;
+    return out;
+  }
+
   async function prefillAll(run, ids, signal, yieldTurn) {
     while (run.seq.length < ids.length) {
       if (signal?.aborted) throw signal.reason;
       const chunk = ids.slice(run.seq.length, run.seq.length + prefill);
       const last = run.seq.length + chunk.length === ids.length;
-      const out = await model.forward(chunk, run.past, run.seq.length, last);
-      run.past = out.past;
+      const out = await advance(run, chunk, last);
       run.logits = out.logits;
       run.seq.push(...chunk);
       await yieldTurn();
@@ -155,8 +162,7 @@ export function createChat({
       if (n === budget - 1) break;
       await yieldTurn();
       if (signal?.aborted) throw signal.reason;
-      const step = await model.forward([token], run.past, run.seq.length, true);
-      run.past = step.past;
+      const step = await advance(run, [token], true);
       run.logits = step.logits;
       run.seq.push(token);
     }
@@ -199,7 +205,7 @@ export function createChat({
       finish = await decodeAll(run, { budget, forced, sampling, out, signal, yieldTurn });
       out.end();
     } finally {
-      cache.put(run.seq, run.past);
+      if (run.past) cache.put(run.seq, run.past);
     }
     times.end = now();
     if (out.toolCalls > 0 && finish === 'stop' && !out.stopped) finish = 'tool_calls';
