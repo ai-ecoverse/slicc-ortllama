@@ -1,6 +1,8 @@
 import { posix } from 'node:path';
-import { ContextOverflow, loadKev, ValidationError } from '@ai-ecoverse/kev.js';
 import { badRequest, HttpError } from '../http/errors.js';
+import { optional } from './optional.js';
+
+export const KEV = '@ai-ecoverse/kev.js';
 
 async function manifestOf(files) {
   if (!(await files.exists('manifest.json'))) return null;
@@ -61,8 +63,9 @@ export const systemone = {
       ...(manifest.vision ? folder(manifest.vision) : []),
     ];
   },
-  async load({ backend, files, variant, overrides = {}, loader = loadKev }) {
-    const kev = await loader((rel) => files.read(rel), {
+  async load({ backend, files, variant, overrides = {}, library = () => optional(KEV) }) {
+    const { loadKev, ValidationError, ContextOverflow } = await library();
+    const kev = await loadKev((rel) => files.read(rel), {
       ort: backend.ort,
       variant,
       executionProviders: backend.executionProviders,
