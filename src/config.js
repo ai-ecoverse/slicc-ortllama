@@ -18,6 +18,7 @@ export const DEFAULT_ALIASES = {
   transcribe: 'onnx-community/whisper-tiny',
   'realtime-transcribe': 'onnx-community/whisper-tiny',
   vad: 'onnx-community/silero-vad',
+  speech: 'onnx-community/Kokoro-82M-v1.0-ONNX',
 };
 
 export const DEFAULT_PORT = 11435;

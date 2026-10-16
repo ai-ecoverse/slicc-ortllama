@@ -31,6 +31,28 @@ function sampleReader(view, format, bits) {
   return null;
 }
 
+export function wavHeader(rate, dataBytes = 0xffffffff, channels = 1) {
+  const out = new Uint8Array(44);
+  const view = new DataView(out.buffer);
+  const put = (at, text) => {
+    for (let i = 0; i < 4; i++) out[at + i] = text.charCodeAt(i);
+  };
+  put(0, 'RIFF');
+  view.setUint32(4, Math.min(0xffffffff, dataBytes + 36), true);
+  put(8, 'WAVE');
+  put(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * channels * 2, true);
+  view.setUint16(32, channels * 2, true);
+  view.setUint16(34, 16, true);
+  put(36, 'data');
+  view.setUint32(40, dataBytes, true);
+  return out;
+}
+
 export function decodeWav(bytes) {
   if (!isWav(bytes)) throw new AudioFormatError('the file is not a WAV file');
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -70,6 +92,16 @@ export function decodeWav(bytes) {
     samples[i] = sum / fmt.channels;
   }
   return { samples, rate: fmt.rate };
+}
+
+export function encodePcm16(samples) {
+  const out = new Uint8Array(samples.length * 2);
+  const view = new DataView(out.buffer);
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i] || 0));
+    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return out;
 }
 
 export function decodePcm16(bytes, rate = 24000, channels = 1) {

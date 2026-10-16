@@ -2,6 +2,7 @@ import { chatRoute } from './chat.js';
 import { badRequest } from './http/errors.js';
 import { requestImage } from './images.js';
 import { PRIORITY } from './runtime.js';
+import { speechRoute } from './speech.js';
 import { transcriptionRoutes } from './transcription.js';
 
 function modelEntry(m, aliasOf = null) {
@@ -59,5 +60,6 @@ export function createRoutes({ catalog, runtime, version }) {
       },
     },
     ...transcriptionRoutes({ catalog, runtime }),
+    'POST /v1/audio/speech': speechRoute({ catalog, runtime }),
   };
 }

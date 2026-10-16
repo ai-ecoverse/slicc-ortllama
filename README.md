@@ -54,9 +54,10 @@ In slicc-kernel, `onnxruntime-node` is not needed: the `slicc` export condition 
 | `POST /v1/systemone` | TypeSafe's System One protocol, on [kev.js](https://github.com/ai-ecoverse/kev.js) |
 | `POST /v1/audio/transcriptions` | OpenAI's transcription API on Whisper: multipart `file`, `model`, `language`, `prompt`, `response_format` (`json`, `verbose_json`, `text`, `srt`, `vtt`); WAV or 16-bit `audio/pcm` (`;rate=N`, default 24 kHz) |
 | `GET /v1/realtime?intent=transcription` | OpenAI's realtime transcription over WebSocket (subprotocol `realtime`): `session.update`, `input_audio_buffer.append`/`commit`/`clear` in; `session.created`/`updated`, `input_audio_buffer.speech_started`/`speech_stopped`/`committed`/`cleared`, `conversation.item.input_audio_transcription.delta`/`completed` and `error` out. `audio/pcm` at 8–48 kHz (24 kHz by default), `server_vad` on Silero VAD or manual commits (`turn_detection: null`) |
+| `POST /v1/audio/speech` | OpenAI's text to speech, on [Kokoro-82M](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) |
 | `GET /ortllama/ps` | loaded models |
 
-Errors use OpenAI's envelope, `{ "error": { "message", "type", "param", "code" } }`. Speech follows in the milestones of #2.
+Errors use OpenAI's envelope, `{ "error": { "message", "type", "param", "code" } }`.
 
 Chat completions take `messages` (`system`, `developer`, `user`, `assistant` with `tool_calls`, `tool`), `tools`, `tool_choice`, `stream`, `stream_options.include_usage`, `max_completion_tokens` or `max_tokens`, `temperature`, `top_p`, `top_k`, `seed`, `stop` and `reasoning_effort`, and ignore `store`. Streams carry `delta.content`, `delta.reasoning_content` and `delta.tool_calls`; the last chunk has `finish_reason` (`stop`, `length` or `tool_calls`) and llama.cpp-style `timings`, followed by a usage chunk when asked. `usage.prompt_tokens_details.cached_tokens` counts the prompt tokens served from the prefix cache, which keeps the attention state of recent conversations, so an agent that resends its history pays only for the new turn. A prompt longer than the context window (the model's, at most 32768 tokens) is refused with `400` and `code: "context_length_exceeded"`, never truncated. A closed connection stops generation.
 
@@ -68,13 +69,36 @@ Transcriptions answer `{ text, language, duration, segments, usage: { type: "dur
 
 A realtime session re-decodes the growing turn about every 500 ms of audio and sends the words two decodes agree on as deltas, then the full transcript when the turn ends: on `silence_duration_ms` of silence (500 ms by default), when no audio has arrived for that long, on `commit`, after 30 seconds of speech, or when the socket closes. `threshold` is kept between 0.2 and 0.95, `prefix_padding_ms` between 0 and 2000 and `silence_duration_ms` between 100 and 10000. `clear` drops transcripts that are still being decoded. A socket that sends nothing for 60 seconds is closed. The WebSocket takes the API key as `Authorization: Bearer` or as the `openai-insecure-api-key.<key>` subprotocol that browsers use, and answers only loopback, `*.localhost` and `ORTLLAMA_ORIGINS` origins. The Whisper model and the one Silero VAD session that all sockets share stay loaded while a session is open, so open realtime sessions can push the number of loaded models past `ORTLLAMA_MAX_LOADED`.
 
-`@ai-ecoverse/slicc-ortllama/pi-audio` builds [pi-audio](https://github.com/ai-ecoverse/pi-audio) voice models for ortllama on pi-audio's OpenAI APIs: `transcriptionModel({ baseUrl, id })` returns an `openai-transcriptions` model for `transcribe()`, and `realtimeTranscriptionModel({ baseUrl, id })` an `openai-realtime-transcription` model with server VAD for `listen()`.
+`@ai-ecoverse/slicc-ortllama/pi-audio` builds [pi-audio](https://github.com/ai-ecoverse/pi-audio) voice models for ortllama on pi-audio's OpenAI APIs, without loading the server or pi-audio: `transcriptionModel({ baseUrl, id })` returns an `openai-transcriptions` model for `transcribe()`, `realtimeTranscriptionModel({ baseUrl, id })` an `openai-realtime-transcription` model with server VAD for `listen()`, and `speechModel({ baseUrl, id, voices })` an `openai-speech` model for `speak()`. `voiceModels(baseUrl)` returns all three. `baseUrl` defaults to `http://127.0.0.1:11435/v1`.
+
+### Speech
+
+`POST /v1/audio/speech` takes `{ model, input, voice, response_format, speed, instructions }`. `model` defaults to the `speech` role, `voice` to `af_heart`, and `instructions` is accepted and ignored. `response_format` is `wav` (the default) or `pcm`, 24 kHz mono 16-bit little-endian; other formats answer `400`. `input` takes up to 4096 characters; it is split into sentences, long ones at clause marks or spaces, and each piece's audio is sent as soon as it is ready.
+
+```sh
+hf download onnx-community/Kokoro-82M-v1.0-ONNX --include config.json tokenizer.json onnx/model.onnx 'voices/*'
+curl -s localhost:11435/v1/audio/speech -H 'content-type: application/json' \
+  -d '{ "input": "Hello from the kernel.", "voice": "bf_emma" }' > hello.wav
+```
+
+Voices are Kokoro's American (`af_*`, `am_*`) and British English (`bf_*`, `bm_*`), Spanish (`e`), French (`f`), Hindi (`h`), Italian (`i`) and Brazilian Portuguese (`p`) voices; Japanese and Chinese are left out, since they have no phonemizer here. Phonemes come from the [espeak-ng](https://www.npmjs.com/package/espeak-ng) WASM build (GPL-3.0-or-later). Variants are the repo's quantizations (`fp32`, `fp16`, `q8`, `q8f16`, `q4`, `q4f16`, `uint8`, `uint8f16`); `fp32` is the default: it is the fastest on CPU, and `fp16`, though faster on WebGPU, comes out garbled there.
+
+```js
+import { speak } from '@ai-ecoverse/pi-audio';
+import { registerOpenAI } from '@ai-ecoverse/pi-audio/openai';
+import { speechModel } from '@ai-ecoverse/slicc-ortllama/pi-audio';
+
+registerOpenAI();
+const model = speechModel();
+for await (const event of speak(model, { text: 'Hello.', voice: 'af_heart' }, { apiKey: 'ortllama' }))
+  if (event.type === 'audio') play(event.chunk);
+```
 
 ## Models
 
 ortllama downloads nothing. It reads the Hugging Face cache that `hf download` fills (`HF_HUB_CACHE`, else `HF_HOME/hub`, else `~/.cache/huggingface/hub`), through its `refs/` and `snapshots/`. A model ID is a Hub ID: `org/repo[/subfolder][@revision][:variant]`, such as `ai-ecoverse/kev.js/kev-0.8b:q8f32`. A model that isn't cached, or a variant with missing files, is answered with `404` and the `hf download` command that fetches it.
 
-Clients can ask for a role instead of a model: `chat`, `chat-reasoning`, `decisions`, `transcribe`, `realtime-transcribe`, `speech` or `vad`. `ortllama alias decisions <model>` changes what a role means, so swapping a model changes no client. `chat` defaults to `mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16`, `decisions` to `ai-ecoverse/kev.js/kev-0.8b:q8f32`, `transcribe` and `realtime-transcribe` to `onnx-community/whisper-tiny`, and `vad` to `onnx-community/silero-vad` (fetch it with `hf download onnx-community/silero-vad --include onnx/model.onnx`).
+Clients can ask for a role instead of a model: `chat`, `chat-reasoning`, `decisions`, `transcribe`, `realtime-transcribe`, `speech` or `vad`. `ortllama alias decisions <model>` changes what a role means, so swapping a model changes no client. `chat` defaults to `mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16`, `decisions` to `ai-ecoverse/kev.js/kev-0.8b:q8f32`, `transcribe` and `realtime-transcribe` to `onnx-community/whisper-tiny`, `vad` to `onnx-community/silero-vad` (fetch it with `hf download onnx-community/silero-vad --include onnx/model.onnx`), and `speech` to `onnx-community/Kokoro-82M-v1.0-ONNX`.
 
 Whisper models are the transformers.js ONNX exports (`config.json` with `model_type: "whisper"`, `onnx/encoder_model*.onnx` and `onnx/decoder_model_merged*.onnx`, external `.onnx_data` included). Variants follow the file suffixes: `fp32`, `fp16`, `q8` (`_quantized`), `int8`, `uint8`, `q4`, `q4f16`, `bnb4`; the default is the first complete one in that order.
 
@@ -100,4 +124,4 @@ Model-specific libraries are never installed with ortllama. They are devDependen
 
 ## Develop
 
-Node ≥ 24. `npm run lint` runs `slicc-lint`. `npm test` runs the integration tests; the Kev, Whisper, realtime, chat and image tests run when `ai-ecoverse/kev.js/kev-0.8b`, `onnx-community/whisper-tiny`, `onnx-community/silero-vad`, `mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16` (with its vision encoder) and `ai-ecoverse/kev.js/kev-0.8b-vision` are in the Hugging Face cache (`ORTLLAMA_REQUIRE_MODEL=1` makes a missing model a failure). Unit tests stay local in `test/unit/` (`npm run test:unit`). Releases use semantic-release on `main`.
+Node ≥ 24. `npm run lint` runs `slicc-lint`. `npm test` runs the integration tests; the Kev, Whisper, realtime, chat, image and Kokoro tests run when `ai-ecoverse/kev.js/kev-0.8b`, `onnx-community/whisper-tiny`, `onnx-community/silero-vad`, `mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16` (with its vision encoder), `ai-ecoverse/kev.js/kev-0.8b-vision` and `onnx-community/Kokoro-82M-v1.0-ONNX` are in the Hugging Face cache (`ORTLLAMA_REQUIRE_MODEL=1` makes a missing model a failure). Unit tests stay local in `test/unit/` (`npm run test:unit`). Releases use semantic-release on `main`.
