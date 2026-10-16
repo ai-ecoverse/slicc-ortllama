@@ -1,20 +1,37 @@
-import { basename, delimiter } from 'node:path';
+import { basename, delimiter, join } from 'node:path';
 import { aliasesOf } from './config.js';
 import { detectEngine, ENGINES } from './engines/index.js';
-import { cachedRepos, formatModelId, isDir, parseModelId, resolveRevision } from './hf/cache.js';
+import {
+  cachedRepos,
+  formatModelId,
+  isDir,
+  parseModelId,
+  repoDir,
+  resolveRevision,
+} from './hf/cache.js';
 import { modelFiles } from './hf/files.js';
 import { badRequest, notFound } from './http/errors.js';
 
-const quote = (s) => `'${s}'`;
+const SAFE = /^[A-Za-z0-9._/:@=-]+$/;
+
+const quote = (word) => `'${word.replaceAll("'", "'\\''")}'`;
+
+export function shellWord(word) {
+  return SAFE.test(word) ? word : quote(word);
+}
 
 export function downloadHint(repo, { revision = null, include = [] } = {}) {
-  const rev = revision ? ` --revision ${revision}` : '';
+  const rev = revision ? ` --revision ${shellWord(revision)}` : '';
   const inc = include.length > 0 ? ` --include ${include.map(quote).join(' ')}` : '';
-  return `hf download ${repo}${rev}${inc}`;
+  return `hf download ${shellWord(repo)}${rev}${inc}`;
 }
 
 function prefixed(subfolder, patterns) {
   return subfolder ? patterns.map((p) => `${subfolder}/${p}`) : patterns;
+}
+
+function snapshotFiles(cache, repo, snapshot) {
+  return modelFiles(snapshot, { allow: [snapshot, join(repoDir(cache, repo), 'blobs')] });
 }
 
 export function localRoots(env = process.env) {
@@ -49,7 +66,7 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
     for (const repo of await cachedRepos(cache)) {
       const rev = await resolveRevision(cache, repo);
       if (!rev) continue;
-      const files = modelFiles(rev.snapshot);
+      const files = snapshotFiles(cache, repo, rev.snapshot);
       const found = await detectEngine(files, engines);
       if (found) {
         out.push({ id: repo, files, found, revision: rev.sha });
@@ -145,7 +162,7 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
         throw notFound(
           `model ${id} is not in the Hugging Face cache; run: ${downloadHint(repo, { revision, include })}`
         );
-      const root = modelFiles(rev.snapshot);
+      const root = snapshotFiles(cache, repo, rev.snapshot);
       const files = subfolder ? root.sub(subfolder) : root;
       const found = (await isDir(files.root)) ? await detectEngine(files, engines) : null;
       if (!found)

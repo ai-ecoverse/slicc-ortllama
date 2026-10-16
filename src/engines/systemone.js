@@ -12,9 +12,22 @@ async function manifestOf(files) {
   }
 }
 
+function weights(part) {
+  return part ? [part.model, ...(part.data ?? [])] : [];
+}
+
 function needed(manifest, variant) {
-  const v = manifest.variants[variant];
-  return ['manifest.json', ...Object.values(manifest.files), v.model, ...(v.data ?? [])];
+  return [
+    'manifest.json',
+    ...Object.values(manifest.files),
+    ...weights(manifest.variants[variant]),
+    ...weights(manifest.vision),
+  ];
+}
+
+function folder(part) {
+  const dir = posix.dirname(part.model);
+  return dir === '.' ? weights(part) : [`${dir}/*`];
 }
 
 export const systemone = {
@@ -40,10 +53,13 @@ export const systemone = {
     return out;
   },
   include(info, variant) {
-    const v = info.manifest.variants[variant];
-    const dir = posix.dirname(v.model);
-    const weights = dir === '.' ? [v.model, ...(v.data ?? [])] : [`${dir}/*`];
-    return ['manifest.json', ...Object.values(info.manifest.files), ...weights];
+    const { manifest } = info;
+    return [
+      'manifest.json',
+      ...Object.values(manifest.files),
+      ...folder(manifest.variants[variant]),
+      ...(manifest.vision ? folder(manifest.vision) : []),
+    ];
   },
   async load({ backend, files, variant, overrides = {}, loader = loadKev }) {
     const kev = await loader((rel) => files.read(rel), {
@@ -57,6 +73,8 @@ export const systemone = {
     return {
       probs: (record) => kev.probs(record),
       async systemOne(request) {
+        if (request.image !== undefined)
+          throw badRequest('images are not accepted on /v1/systemone yet', 'image');
         try {
           return await kev.systemOne(request);
         } catch (error) {

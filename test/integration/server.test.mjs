@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { request } from 'node:http';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { promisify } from 'node:util';
@@ -97,6 +98,34 @@ describe('ortllama server on a Hugging Face cache', () => {
     const route = await fetch(`${server.url}/v1/nothing`);
     assert.equal(route.status, 404);
     assert.equal((await route.json()).error.code, 'unknown_route');
+  });
+
+  test('refuses path tricks in model ids and foreign Host headers', async () => {
+    const traversal = await post('/v1/systemone', {
+      model: 'nobody/none@../../../../tmp/pointer',
+      state: 'x',
+      questions: {},
+    });
+    assert.equal(traversal.status, 400);
+    const injected = await post('/v1/systemone', {
+      model: 'test/kev@main;touch /tmp/pwned',
+      state: 'x',
+      questions: {},
+    });
+    assert.equal(injected.status, 400);
+    const status = await new Promise((resolve, reject) => {
+      const r = request(
+        `${server.url}/v1/models`,
+        { headers: { host: 'rebind.example:11435' } },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode);
+        }
+      );
+      r.on('error', reject);
+      r.end();
+    });
+    assert.equal(status, 403);
   });
 
   test('answers CORS preflights for kernel loopback origins only', async () => {

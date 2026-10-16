@@ -1,4 +1,4 @@
-export const PRIORITY = { realtime: 0, speech: 1, decisions: 2, chat: 3, admin: 4 };
+export const PRIORITY = { expire: -1, realtime: 0, speech: 1, decisions: 2, chat: 3, admin: 4 };
 
 function abortError(signal) {
   return signal?.reason instanceof Error
@@ -37,7 +37,13 @@ export class Runtime {
   run(priority, task, signal) {
     if (signal?.aborted) return Promise.reject(abortError(signal));
     return new Promise((resolve, reject) => {
-      this.queue.push({ priority, seq: this.seq++, task, resolve, reject, signal });
+      const job = { priority, seq: this.seq++, task, resolve, reject, signal };
+      job.onAbort = () => {
+        this.queue.splice(this.queue.indexOf(job), 1);
+        reject(abortError(signal));
+      };
+      signal?.addEventListener('abort', job.onAbort, { once: true });
+      this.queue.push(job);
       this.pump();
     });
   }
@@ -46,14 +52,10 @@ export class Runtime {
     if (this.running || this.queue.length === 0) return;
     this.queue.sort((a, b) => a.priority - b.priority || a.seq - b.seq);
     const job = this.queue.shift();
-    if (job.signal?.aborted) {
-      job.reject(abortError(job.signal));
-      this.pump();
-      return;
-    }
+    job.signal?.removeEventListener('abort', job.onAbort);
     this.running = true;
     Promise.resolve()
-      .then(() => job.task())
+      .then(() => job.task(job.signal))
       .then(job.resolve, job.reject)
       .finally(() => {
         this.running = false;
@@ -67,6 +69,7 @@ export class Runtime {
       async () => {
         const entry = await this.acquire(resolved);
         try {
+          if (signal?.aborted) throw abortError(signal);
           return await fn(entry.instance, entry);
         } finally {
           this.touch(entry);
@@ -80,6 +83,7 @@ export class Runtime {
     const existing = this.loaded.get(resolved.key);
     if (existing) {
       this.timers.clearTimeout(existing.timer);
+      existing.generation++;
       return existing;
     }
     await this.evict(this.maxLoaded - 1);
@@ -117,6 +121,7 @@ export class Runtime {
       lastUsed: this.now(),
       timer: null,
       expiresAt: null,
+      generation: 0,
     };
     this.loaded.set(resolved.key, entry);
     return entry;
@@ -127,12 +132,18 @@ export class Runtime {
     this.timers.clearTimeout(entry.timer);
     entry.timer = null;
     entry.expiresAt = null;
+    const generation = ++entry.generation;
     if (!Number.isFinite(this.keepAliveMs)) return;
     entry.expiresAt = entry.lastUsed + this.keepAliveMs;
     entry.timer = this.timers.setTimeout(() => {
-      this.run(PRIORITY.admin, () => this.unload(entry.key)).catch(() => {});
+      this.run(PRIORITY.expire, () => this.expire(entry, generation)).catch(() => {});
     }, this.keepAliveMs);
     entry.timer?.unref?.();
+  }
+
+  async expire(entry, generation) {
+    if (this.loaded.get(entry.key) !== entry || entry.generation !== generation) return false;
+    return this.unload(entry.key);
   }
 
   async evict(keep) {

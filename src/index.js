@@ -26,6 +26,20 @@ export async function openCatalog({
   return createCatalog({ cache, home, config, modelPath });
 }
 
+function positive(value, fallback) {
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 ? n : fallback;
+}
+
+export function hostsFor(host, env = process.env) {
+  const extra = (env.ORTLLAMA_HOSTS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (extra.length > 0) return [...extra, host];
+  return host === '0.0.0.0' || host === '::' ? ['*'] : [host];
+}
+
 export function createRuntime({
   env = process.env,
   backend = () => loadBackend({ env }),
@@ -35,7 +49,7 @@ export function createRuntime({
   return new Runtime({
     loadBackend: backend,
     keepAliveMs: parseDuration(keepAlive ?? env.ORTLLAMA_KEEP_ALIVE, 300_000),
-    maxLoaded: Number(maxLoaded ?? env.ORTLLAMA_MAX_LOADED ?? 1),
+    maxLoaded: positive(maxLoaded ?? env.ORTLLAMA_MAX_LOADED, 1),
   });
 }
 
@@ -52,7 +66,11 @@ export async function startServer({
   const rt = runtime ?? createRuntime({ env, ...rest });
   const routes = createRoutes({ catalog: cat, runtime: rt, version: VERSION });
   const origins = (env.ORTLLAMA_ORIGINS ?? '').split(',').filter(Boolean);
-  const server = createServer(routes, { apiKey: apiKey ?? env.ORTLLAMA_API_KEY, origins });
+  const server = createServer(routes, {
+    apiKey: apiKey ?? env.ORTLLAMA_API_KEY,
+    origins,
+    hosts: hostsFor(host, env),
+  });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(listenPort(port, env), host, resolve);
@@ -63,7 +81,7 @@ export async function startServer({
     catalog: cat,
     runtime: rt,
     port: bound,
-    url: `http://${host}:${bound}`,
+    url: `http://${host.includes(':') ? `[${host}]` : host}:${bound}`,
     async close() {
       await new Promise((resolve) => server.close(() => resolve()));
       await rt.close();

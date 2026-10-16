@@ -3,6 +3,19 @@ import { errorBody, HttpError } from './errors.js';
 
 const MAX_BODY = 16 * 1024 * 1024;
 
+const LOOPBACK = /^(localhost|127(\.\d{1,3}){3}|\[::1\]|::1|host\.slicc\.internal|.+\.localhost)$/;
+
+export function allowedHost(host, extra = []) {
+  if (!host || extra.includes('*')) return true;
+  let hostname;
+  try {
+    hostname = new URL(`http://${host}`).hostname;
+  } catch {
+    return false;
+  }
+  return LOOPBACK.test(hostname) || extra.includes(hostname);
+}
+
 export function allowedOrigin(origin, extra = []) {
   if (!origin) return null;
   if (extra.includes(origin)) return origin;
@@ -12,10 +25,7 @@ export function allowedOrigin(origin, extra = []) {
   } catch {
     return null;
   }
-  const host = url.hostname;
-  const local =
-    host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host.endsWith('.localhost');
-  return local ? origin : null;
+  return LOOPBACK.test(url.hostname) && url.hostname !== 'host.slicc.internal' ? origin : null;
 }
 
 function corsHeaders(req, options) {
@@ -37,13 +47,14 @@ export function readJson(req, limit = MAX_BODY) {
     req.on('data', (chunk) => {
       size += chunk.length;
       if (size > limit) {
+        chunks.length = 0;
         reject(new HttpError(413, `request body is larger than ${limit} bytes`));
-        req.destroy();
         return;
       }
       chunks.push(chunk);
     });
     req.on('end', () => {
+      if (size > limit) return;
       const text = Buffer.concat(chunks).toString('utf8');
       if (text.trim() === '') return reject(new HttpError(400, 'request body must be JSON'));
       try {
@@ -53,6 +64,9 @@ export function readJson(req, limit = MAX_BODY) {
       }
     });
     req.on('error', reject);
+    req.on('close', () => {
+      if (!req.complete) reject(new HttpError(400, 'the request body was cut off'));
+    });
   });
 }
 
@@ -85,6 +99,13 @@ export function createHandler(routes, options = {}) {
       if (!res.writableFinished) controller.abort();
     });
     try {
+      if (!allowedHost(req.headers.host, options.hosts)) {
+        throw new HttpError(
+          403,
+          `host ${req.headers.host} is not allowed; set ORTLLAMA_HOSTS to allow it`,
+          { code: 'host_not_allowed' }
+        );
+      }
       const url = new URL(req.url, 'http://ortllama');
       const route = routes[`${req.method} ${url.pathname}`];
       if (!route)

@@ -51,11 +51,19 @@ async function serve(values, io) {
   );
   io.out.write(`ortllama ${VERSION} listening on ${server.url}\n`);
   const stop = async () => {
-    await rm(runFile(home), { force: true });
     await server.close();
+    await rm(runFile(home), { force: true });
   };
   for (const signal of ['SIGINT', 'SIGTERM']) io.signals.once(signal, stop);
   return null;
+}
+
+async function answers(io, url) {
+  try {
+    return (await io.fetch(`${url}/`)).ok;
+  } catch {
+    return false;
+  }
 }
 
 async function detach(values, io, home) {
@@ -64,6 +72,11 @@ async function detach(values, io, home) {
     ...(values.port ? ['--port', values.port] : []),
     ...(values.host ? ['--host', values.host] : []),
   ];
+  const running = await readRun(home);
+  if (running && (await answers(io, running.url))) {
+    io.out.write(`ortllama is already running on ${running.url} (pid ${running.pid})\n`);
+    return 0;
+  }
   await rm(runFile(home), { force: true });
   const child = io.spawn(process.execPath, [io.binPath, ...args], {
     detached: true,
@@ -122,7 +135,14 @@ async function ps(values, io) {
       ? { authorization: `Bearer ${io.env.ORTLLAMA_API_KEY}` }
       : {};
     const response = await io.fetch(`${run.url}/ortllama/ps`, { headers });
-    models = (await response.json()).models;
+    const body = await response.json();
+    if (!response.ok) {
+      io.err.write(
+        `ortllama on ${run.url} answered ${response.status}: ${body.error?.message ?? 'no message'}\n`
+      );
+      return 1;
+    }
+    models = body.models;
   } catch {
     io.err.write(`ortllama is not answering on ${run.url}\n`);
     return 1;
@@ -179,42 +199,37 @@ async function check(values, positionals, io) {
     io.err.write('ortllama check needs a model\n');
     return 2;
   }
-  const keepAlive = setInterval(Date.now, 1000);
-  try {
-    const catalog = await openCatalog({ env: io.env });
-    const resolved = await catalog.resolve(id);
-    const fixtures = values.fixtures
-      ? JSON.parse(await readFile(values.fixtures, 'utf8')).fixtures
-      : null;
-    const engine = resolved.engine;
-    const runtime = io.runtime ?? createRuntime({ env: io.env, keepAlive: '0' });
-    const overrides = engine.checkOverrides(fixtures);
-    const entry = await runtime.acquire({
-      ...resolved,
-      engine: { ...engine, load: (o) => engine.load({ ...o, overrides }) },
-    });
-    const report = {
-      id: resolved.id,
-      variant: resolved.variant,
-      executionProviders: entry.executionProviders,
-      loadMs: entry.loadMs,
-      ...(await engine.check(entry.instance, { fixtures })),
-    };
-    await runtime.close();
-    if (values.json) io.out.write(`${JSON.stringify(report, null, 2)}\n`);
-    else {
+  const catalog = await openCatalog({ env: io.env });
+  const resolved = await catalog.resolve(id);
+  const fixtures = values.fixtures
+    ? JSON.parse(await readFile(values.fixtures, 'utf8')).fixtures
+    : null;
+  const engine = resolved.engine;
+  const runtime = io.runtime ?? createRuntime({ env: io.env, keepAlive: '0' });
+  const overrides = engine.checkOverrides(fixtures);
+  const entry = await runtime.acquire({
+    ...resolved,
+    engine: { ...engine, load: (o) => engine.load({ ...o, overrides }) },
+  });
+  const report = {
+    id: resolved.id,
+    variant: resolved.variant,
+    executionProviders: entry.executionProviders,
+    loadMs: entry.loadMs,
+    ...(await engine.check(entry.instance, { fixtures })),
+  };
+  await runtime.close();
+  if (values.json) io.out.write(`${JSON.stringify(report, null, 2)}\n`);
+  else {
+    io.out.write(
+      `${report.id}:${report.variant} on ${report.executionProviders.join(',')}: loaded in ${Math.round(report.loadMs)} ms, request ${Math.round(report.requestMs)} ms\n`
+    );
+    if (fixtures)
       io.out.write(
-        `${report.id}:${report.variant} on ${report.executionProviders.join(',')}: loaded in ${Math.round(report.loadMs)} ms, request ${Math.round(report.requestMs)} ms\n`
+        `fixtures: ${report.questions} questions, mean |dp| ${report.mean.toFixed(4)}, max ${report.max.toFixed(4)} (${report.worstAt}), ${report.flips.length} changed\n`
       );
-      if (fixtures)
-        io.out.write(
-          `fixtures: ${report.questions} questions, mean |dp| ${report.mean.toFixed(4)}, max ${report.max.toFixed(4)} (${report.worstAt}), ${report.flips.length} changed\n`
-        );
-    }
-    return report.ok ? 0 : 1;
-  } finally {
-    clearInterval(keepAlive);
   }
+  return report.ok ? 0 : 1;
 }
 
 export async function main(argv, overrides = {}) {

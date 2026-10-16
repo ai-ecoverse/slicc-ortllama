@@ -22,7 +22,7 @@ curl -s localhost:11435/v1/systemone -H 'content-type: application/json' -d '{
 }'
 ```
 
-In slicc-kernel, `onnxruntime-node` is not needed: the `slicc` export condition picks `onnxruntime-web`.
+In slicc-kernel, `onnxruntime-node` is not needed: the `slicc` export condition picks `onnxruntime-web`. It needs slicc-jsh 0.29.10 or later, which keeps a program alive while WebGPU work is pending.
 
 | Command | |
 | --- | --- |
@@ -58,6 +58,7 @@ Engines are picked by the files a model has, not by its name. Each engine in `sr
 | `ORTLLAMA_PORT` | `11435` | |
 | `ORTLLAMA_API_KEY` | none | require `Authorization: Bearer <key>` |
 | `ORTLLAMA_ORIGINS` | none | more CORS origins; loopback and `*.localhost` are always allowed |
+| `ORTLLAMA_HOSTS` | none | more `Host` names to accept; loopback names, `*.localhost` and `host.slicc.internal` are always accepted, and any host is when the server listens on `0.0.0.0` or `::` without this list. Other hosts get `403`, which stops DNS rebinding |
 | `ORTLLAMA_KEEP_ALIVE` | `5m` | unload an idle model after this long (`-1` keeps it) |
 | `ORTLLAMA_MAX_LOADED` | `1` | models kept loaded at once |
 | `ORTLLAMA_EP` | `webgpu,cpu` on Node, `webgpu,wasm` in the browser | execution providers, in order |

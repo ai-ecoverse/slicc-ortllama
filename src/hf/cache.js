@@ -3,6 +3,14 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 const SHA = /^[0-9a-f]{40}$/;
+const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export function validRevision(revision) {
+  return (
+    SHA.test(revision) ||
+    revision.split('/').every((part) => NAME.test(part) && !part.includes('..'))
+  );
+}
 
 export function hubCache(env = process.env, home = homedir()) {
   if (env.HF_HUB_CACHE) return env.HF_HUB_CACHE;
@@ -28,6 +36,13 @@ export function parseModelId(id) {
     rest = rest.slice(0, at);
   }
   const parts = rest.split('/').filter(Boolean);
+  if (parts.some((p) => !NAME.test(p) || p.includes('..')))
+    throw new TypeError(
+      `model id ${id} may only use letters, digits, ., _ and - in its path, and no . or .. segments`
+    );
+  if (revision && !validRevision(revision))
+    throw new TypeError(`revision ${revision} is not a branch, tag or commit name`);
+  if (variant && !NAME.test(variant)) throw new TypeError(`variant ${variant} is not a valid name`);
   if (parts.length < 2)
     throw new TypeError(`model id ${id} must be org/repo[/subfolder][@revision][:variant]`);
   return {
@@ -47,11 +62,12 @@ export function repoDir(cache, repo) {
 }
 
 export async function resolveRevision(cache, repo, revision = 'main') {
+  if (!validRevision(revision)) return null;
   const dir = repoDir(cache, repo);
   const sha = SHA.test(revision)
     ? revision
-    : (await readText(join(dir, 'refs', ...revision.split('/')))).trim();
-  if (!sha) return null;
+    : (await readRef(join(dir, 'refs', ...revision.split('/')))).trim();
+  if (!SHA.test(sha)) return null;
   const snapshot = join(dir, 'snapshots', sha);
   return (await isDir(snapshot)) ? { sha, snapshot } : null;
 }
@@ -82,9 +98,10 @@ export async function listDir(path) {
   }
 }
 
-async function readText(path) {
+async function readRef(path) {
   try {
-    return await readFile(path, 'utf8');
+    const info = await stat(path);
+    return info.isFile() && info.size <= 64 ? await readFile(path, 'utf8') : '';
   } catch {
     return '';
   }
