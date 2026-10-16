@@ -82,6 +82,11 @@ export const systemone = {
           return await kev.systemOne(request);
         } catch (error) {
           if (error instanceof ValidationError) throw badRequest(error.message);
+          if (request.image !== undefined && error instanceof RangeError)
+            throw badRequest(
+              `the image does not fit this model's vision encoder: ${error.message}`,
+              'image'
+            );
           if (error instanceof ContextOverflow)
             throw new HttpError(422, error.message, { code: 'context_length_exceeded' });
           throw error;

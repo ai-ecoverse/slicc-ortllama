@@ -29,6 +29,11 @@ export function expandImages(ids, images, vision) {
     const longest =
       image.detail === 'low' ? Math.min(LOW_DETAIL_EDGE, vision.cfg.longest) : vision.cfg.longest;
     const [H, W] = targetSize(image.height, image.width, vision.cfg, longest);
+    if (H === 0 || W === 0)
+      throw badRequest(
+        `an image of ${image.width}x${image.height} is too thin for this model's vision encoder`,
+        'messages'
+      );
     const tokens = imageTokens(H / unit, W / unit, vision.ids);
     spans.push({
       start: out.length,

@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
-import { badRequest } from './http/errors.js';
+import { jpegExif, orient, orientation, webpExif } from './exif.js';
+import { badRequest, HttpError } from './http/errors.js';
+import { checkInflate, pngChunks, rawSize } from './png.js';
 
 export const IMAGE_LIMITS = { maxBytes: 10 * 2 ** 20, maxImages: 8, maxPixels: 40_000_000 };
 
@@ -118,16 +120,20 @@ async function webpDecoder() {
   return webpReady;
 }
 
-async function decodeAs(kind, bytes, limits) {
-  if (kind === 'png') {
-    const { decode, convertIndexedToRgb } = await import('fast-png');
-    const png = decode(bytes, { checkCrc: true });
-    const rgb = png.palette ? convertIndexedToRgb(png) : null;
-    const flat = rgb
-      ? { ...png, data: rgb, depth: 8, channels: rgb.length / (png.width * png.height) }
-      : png;
-    return { width: png.width, height: png.height, data: toRgba(flat) };
-  }
+async function decodePng(bytes, param) {
+  const { ihdr, idat, exif, file } = pngChunks(bytes, param);
+  checkInflate(idat, rawSize(ihdr, param), param);
+  const { decode, convertIndexedToRgb } = await import('fast-png');
+  const png = decode(file, { checkCrc: true });
+  const rgb = png.palette ? convertIndexedToRgb(png) : null;
+  const flat = rgb
+    ? { ...png, data: rgb, depth: 8, channels: rgb.length / (png.width * png.height) }
+    : png;
+  return { width: png.width, height: png.height, data: toRgba(flat), exif };
+}
+
+async function decodeAs(kind, bytes, limits, param) {
+  if (kind === 'png') return decodePng(bytes, param);
   if (kind === 'jpeg') {
     const { default: jpeg } = await import('jpeg-js');
     const img = jpeg.decode(bytes, {
@@ -136,7 +142,7 @@ async function decodeAs(kind, bytes, limits) {
       maxResolutionInMP: limits.maxPixels / 1e6,
       maxMemoryUsageInMB: 1024,
     });
-    return { width: img.width, height: img.height, data: img.data };
+    return { width: img.width, height: img.height, data: img.data, exif: jpegExif(bytes) };
   }
   const decode = await webpDecoder();
   const img = await decode(bytes);
@@ -144,12 +150,19 @@ async function decodeAs(kind, bytes, limits) {
     width: img.width,
     height: img.height,
     data: new Uint8Array(img.data.buffer, img.data.byteOffset, img.data.length),
+    exif: webpExif(bytes),
   };
 }
 
 async function sha256(bytes) {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
   return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+export function checkDecoded(image, kind, limits, param) {
+  const pixels = image.width * image.height;
+  if (image.data.length !== pixels * 4 || pixels > limits.maxPixels)
+    throw badRequest(`the ${kind} image decoded to the wrong size`, param);
 }
 
 export async function decodeImage(bytes, { param = 'messages', limits = IMAGE_LIMITS } = {}) {
@@ -165,11 +178,14 @@ export async function decodeImage(bytes, { param = 'messages', limits = IMAGE_LI
     );
   let image;
   try {
-    image = await decodeAs(kind, bytes, limits);
+    image = await decodeAs(kind, bytes, limits, param);
   } catch (error) {
+    if (error instanceof HttpError) throw error;
     throw badRequest(`the ${kind} image could not be decoded: ${error.message}`, param);
   }
-  return { ...image, hash: await sha256(bytes) };
+  checkDecoded(image, kind, limits, param);
+  const { width, height, data } = orient(image, orientation(image.exif));
+  return { width, height, data, hash: await sha256(bytes) };
 }
 
 export async function imageFromUrl(url, options) {
