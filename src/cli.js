@@ -224,7 +224,8 @@ async function check(values, positionals, io) {
     io.out.write(
       `${report.id}:${report.variant} on ${report.executionProviders.join(',')}: loaded in ${Math.round(report.loadMs)} ms, request ${Math.round(report.requestMs)} ms\n`
     );
-    if (fixtures)
+    if (fixtures && report.summary) io.out.write(`${report.summary}\n`);
+    else if (fixtures)
       io.out.write(
         `fixtures: ${report.questions} questions, mean |dp| ${report.mean.toFixed(4)}, max ${report.max.toFixed(4)} (${report.worstAt}), ${report.flips.length} changed\n`
       );

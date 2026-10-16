@@ -22,7 +22,8 @@
     "provenance": true
   },
   "exports": {
-    ".": "./src/index.js"
+    ".": "./src/index.js",
+    "./pi-audio": "./src/pi-audio.js"
   },
   "files": [
     "src"
@@ -38,6 +39,7 @@
     "test:unit": "mcr -c node_modules/@ai-ecoverse/slicc-shared-web/mcr.config.mjs node --test 'test/unit/**/*.test.mjs'"
   },
   "devDependencies": {
+    "@ai-ecoverse/pi-audio": "1.27.0",
     "@ai-ecoverse/slicc-shared-web": "1.22.1",
     "@biomejs/biome": "2.5.15",
     "@earendil-works/pi-ai": "1.3.0",
@@ -64,6 +66,11 @@
   "peerDependenciesMeta": {
     "onnxruntime-node": {
       "optional": true
+    }
+  },
+  "overrides": {
+    "@ai-ecoverse/pi-audio": {
+      "@earendil-works/pi-ai": "$@earendil-works/pi-ai"
     }
   }
 }

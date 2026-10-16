@@ -13,6 +13,7 @@ export const ROLES = [
 
 export const DEFAULT_ALIASES = {
   decisions: 'ai-ecoverse/kev.js/kev-0.8b:q8f32',
+  transcribe: 'onnx-community/whisper-tiny',
 };
 
 export const DEFAULT_PORT = 11435;
