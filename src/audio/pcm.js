@@ -90,28 +90,58 @@ function sinc(x) {
   return Math.sin(y) / y;
 }
 
-export function resample(samples, from, to, zeros = 16) {
-  if (from === to) return samples;
+function filterOf(from, to, zeros) {
   const ratio = to / from;
   const cutoff = Math.min(1, ratio) * 0.97;
   const half = Math.ceil(zeros / cutoff);
-  const length = Math.floor((samples.length * to) / from);
-  const out = new Float32Array(length);
-  for (let j = 0; j < length; j++) {
-    const t = j / ratio;
-    const center = Math.floor(t);
-    let sum = 0;
-    let weight = 0;
-    for (let k = center - half + 1; k <= center + half; k++) {
-      const d = t - k;
-      const w = 0.5 + 0.5 * Math.cos((Math.PI * d) / half);
-      const h = cutoff * sinc(cutoff * d) * w;
-      weight += h;
-      if (k >= 0 && k < samples.length) sum += samples[k] * h;
-    }
-    out[j] = sum / weight;
-  }
+  return {
+    ratio,
+    half,
+    at(get, j) {
+      const t = j / ratio;
+      const center = Math.floor(t);
+      let sum = 0;
+      let weight = 0;
+      for (let k = center - half + 1; k <= center + half; k++) {
+        const d = t - k;
+        const h = cutoff * sinc(cutoff * d) * (0.5 + 0.5 * Math.cos((Math.PI * d) / half));
+        weight += h;
+        sum += get(k) * h;
+      }
+      return sum / weight;
+    },
+  };
+}
+
+export function resample(samples, from, to, zeros = 16) {
+  if (from === to) return samples;
+  const filter = filterOf(from, to, zeros);
+  const get = (k) => (k >= 0 && k < samples.length ? samples[k] : 0);
+  const out = new Float32Array(Math.floor((samples.length * to) / from));
+  for (let j = 0; j < out.length; j++) out[j] = filter.at(get, j);
   return out;
+}
+
+export function createResampler(from, to, zeros = 16) {
+  if (from === to) return (samples) => samples;
+  const filter = filterOf(from, to, zeros);
+  let buffer = new Float32Array(0);
+  let base = 0;
+  let next = 0;
+  const get = (k) => (k >= base && k < base + buffer.length ? buffer[k - base] : 0);
+  return (samples) => {
+    const joined = new Float32Array(buffer.length + samples.length);
+    joined.set(buffer);
+    joined.set(samples, buffer.length);
+    buffer = joined;
+    const end = base + buffer.length;
+    const out = [];
+    while (next / filter.ratio + filter.half < end) out.push(filter.at(get, next++));
+    const keep = Math.max(base, Math.floor(next / filter.ratio) - filter.half);
+    buffer = buffer.slice(keep - base);
+    base = keep;
+    return Float32Array.from(out);
+  };
 }
 
 export function audioParams(contentType = '') {

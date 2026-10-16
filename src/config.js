@@ -9,11 +9,14 @@ export const ROLES = [
   'transcribe',
   'realtime-transcribe',
   'speech',
+  'vad',
 ];
 
 export const DEFAULT_ALIASES = {
   decisions: 'ai-ecoverse/kev.js/kev-0.8b:q8f32',
   transcribe: 'onnx-community/whisper-tiny',
+  'realtime-transcribe': 'onnx-community/whisper-tiny',
+  vad: 'onnx-community/silero-vad',
 };
 
 export const DEFAULT_PORT = 11435;

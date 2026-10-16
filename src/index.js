@@ -4,6 +4,7 @@ import { createCatalog, localRoots } from './catalog.js';
 import { listenPort, ortllamaHome, parseDuration, readConfig } from './config.js';
 import { hubCache } from './hf/cache.js';
 import { createServer } from './http/server.js';
+import { attachRealtime } from './realtime/socket.js';
 import { createRoutes } from './routes.js';
 import { Runtime } from './runtime.js';
 
@@ -66,11 +67,9 @@ export async function startServer({
   const rt = runtime ?? createRuntime({ env, ...rest });
   const routes = createRoutes({ catalog: cat, runtime: rt, version: VERSION });
   const origins = (env.ORTLLAMA_ORIGINS ?? '').split(',').filter(Boolean);
-  const server = createServer(routes, {
-    apiKey: apiKey ?? env.ORTLLAMA_API_KEY,
-    origins,
-    hosts: hostsFor(host, env),
-  });
+  const options = { apiKey: apiKey ?? env.ORTLLAMA_API_KEY, origins, hosts: hostsFor(host, env) };
+  const server = createServer(routes, options);
+  const realtime = attachRealtime(server, { catalog: cat, runtime: rt, ...options });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(listenPort(port, env), host, resolve);
@@ -83,6 +82,7 @@ export async function startServer({
     port: bound,
     url: `http://${host.includes(':') ? `[${host}]` : host}:${bound}`,
     async close() {
+      await realtime.close();
       await new Promise((resolve) => server.close(() => resolve()));
       await rt.close();
     },
