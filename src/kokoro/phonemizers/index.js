@@ -6,6 +6,8 @@ import { xenova } from './xenova.js';
 
 export const PHONEMIZERS = [misaki, espeakNg, phonemizeJs, xenova];
 
+export const BROKEN_MS = 60_000;
+
 function unavailable(message) {
   return new HttpError(501, message, { code: 'engine_unavailable' });
 }
@@ -25,21 +27,53 @@ export function phonemizerOrder(env = process.env, candidates = PHONEMIZERS) {
   return names.map((name) => {
     const found = candidates.find((c) => c.name === name);
     if (!found)
-      throw new RangeError(
-        `ORTLLAMA_PHONEMIZERS names ${name}; use ${candidates.map((c) => c.name).join(', ')}`
+      throw new HttpError(
+        400,
+        `ORTLLAMA_PHONEMIZERS names ${name}; use ${candidates.map((c) => c.name).join(', ')}`,
+        { code: 'invalid_phonemizer' }
       );
     return found;
   });
 }
 
-export async function loadPhonemizers({ candidates = phonemizerOrder(), ...context } = {}) {
+export async function loadPhonemizers({
+  candidates = phonemizerOrder(),
+  now = Date.now,
+  ...context
+} = {}) {
   const loaded = [];
   const failures = [];
-  const pick = (language, skip = null) =>
-    loaded.find((p) => p !== skip && p.languages.includes(language)) ?? null;
+  const broken = new Map();
+  const usable = (language, skip) =>
+    loaded.filter(
+      (p) => !skip.includes(p) && p.languages.includes(language) && !(broken.get(p) > now())
+    );
+
+  async function run(parts, language, skip = []) {
+    const choices = usable(language, skip);
+    if (choices.length === 0)
+      throw unavailable(
+        `no phonemizer for ${language} is installed; install one of: ${installs(language)}`
+      );
+    let last;
+    for (const backend of choices) {
+      try {
+        return await backend.phonemize(parts, language);
+      } catch (error) {
+        if (error instanceof HttpError) throw error;
+        broken.set(backend, now() + BROKEN_MS);
+        last = error;
+      }
+    }
+    throw last;
+  }
+
   for (const candidate of candidates) {
     let backend;
-    const fallback = (language) => pick(language, backend);
+    const fallback = (language) =>
+      usable(language, [backend]).length > 0
+        ? { phonemize: (parts, lang) => run(parts, lang, [backend]) }
+        : null;
     try {
       backend = await candidate.load({ ...context, fallback });
     } catch (error) {
@@ -55,16 +89,7 @@ export async function loadPhonemizers({ candidates = phonemizerOrder(), ...conte
     );
   return {
     names: loaded.map((p) => p.name),
-    for(language) {
-      const found = pick(language);
-      if (!found)
-        throw unavailable(
-          `no phonemizer for ${language} is installed; install one of: ${installs(language)}`
-        );
-      return found;
-    },
-    async phonemize(parts, language) {
-      return this.for(language).phonemize(parts, language);
-    },
+    for: (language) => usable(language, [])[0] ?? null,
+    phonemize: (parts, language) => run(parts, language),
   };
 }

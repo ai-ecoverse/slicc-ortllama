@@ -31,10 +31,59 @@ export function numberWords(n) {
       return `${numberWords(Math.floor(n / size))} ${name}${n % size ? ` ${numberWords(n % size)}` : ''}`;
 }
 
-function value(entry) {
+const VERBS = ['VERB', 'VBD', 'VBN', 'VBP'];
+const AS_VERB = ['VERB', 'VBP', 'DEFAULT'];
+const ORDINALS = {
+  one: 'first',
+  two: 'second',
+  three: 'third',
+  five: 'fifth',
+  eight: 'eighth',
+  nine: 'ninth',
+  twelve: 'twelfth',
+};
+const SYMBOLS = {
+  '%': 'percent',
+  '&': 'and',
+  '+': 'plus',
+  '@': 'at',
+  '#': 'number',
+  '=': 'equals',
+};
+
+export function ordinalWords(n) {
+  const words = numberWords(n).split(' ');
+  const last = words.pop();
+  const ordinal = ORDINALS[last] ?? (last.endsWith('y') ? `${last.slice(0, -1)}ieth` : `${last}th`);
+  return [...words, ordinal].join(' ');
+}
+
+const digits = (text) => [...text].map((d) => ONES[d]).join(' ');
+
+export function expand(word) {
+  if (/^\d+$/.test(word)) return word.length <= 12 ? numberWords(Number(word)) : digits(word);
+  const ordinal = /^(\d{1,12})(st|nd|rd|th)$/i.exec(word);
+  if (ordinal) return ordinalWords(Number(ordinal[1]));
+  const decimal = /^(\d{1,12})\.(\d+)$/.exec(word);
+  if (decimal) return `${numberWords(Number(decimal[1]))} point ${digits(decimal[2])}`;
+  if (!/[\d%&+@#=]/.test(word)) return null;
+  return word
+    .match(/\d+|[^\d%&+@#=]+|./g)
+    .map((run) => SYMBOLS[run] ?? (/^\d+$/.test(run) ? expand(run) : run))
+    .join(' ');
+}
+
+function pick(entry, prefer) {
   if (typeof entry === 'string') return entry;
   if (!entry || typeof entry !== 'object') return null;
-  return entry.DEFAULT ?? Object.values(entry).find((v) => typeof v === 'string') ?? null;
+  for (const pos of prefer) if (typeof entry[pos] === 'string') return entry[pos];
+  return Object.values(entry).find((v) => typeof v === 'string') ?? null;
+}
+
+function verbal(entry) {
+  if (!entry || typeof entry !== 'object') return false;
+  const base = pick(entry, ['DEFAULT']);
+  return VERBS.some((pos) => typeof entry[pos] === 'string' && entry[pos] !== base);
 }
 
 function plural(stem, language) {
@@ -72,22 +121,22 @@ const SUFFIXES = [
 const capital = (word) => word[0].toUpperCase() + word.slice(1).toLowerCase();
 
 export function createMisaki(lexicons, { fallback = () => null } = {}) {
-  function lookup(word, language) {
+  function entry(word, language) {
     if (!word) return null;
     for (const dict of lexicons[language])
-      for (const key of [word, word.toLowerCase(), capital(word)]) {
-        const found = value(Object.hasOwn(dict, key) ? dict[key] : null);
-        if (found) return found;
-      }
+      for (const key of [word, word.toLowerCase(), capital(word)])
+        if (Object.hasOwn(dict, key) && pick(dict[key], ['DEFAULT'])) return dict[key];
     return null;
   }
+
+  const lookup = (word, language, prefer = ['DEFAULT']) => pick(entry(word, language), prefer);
 
   function stemmed(word, language) {
     for (const rule of SUFFIXES) {
       if (word.length < rule.min || !rule.test.test(word.toLowerCase())) continue;
       const stem = rule
         .stems(word)
-        .map((w) => lookup(w, language))
+        .map((w) => lookup(w, language, AS_VERB))
         .find(Boolean);
       if (stem) return rule.join(stem, language);
     }
@@ -99,55 +148,75 @@ export function createMisaki(lexicons, { fallback = () => null } = {}) {
     return letters.every(Boolean) ? letters.join('') : null;
   }
 
-  function known(word, language) {
-    if (/^\d+$/.test(word))
-      return word.length <= 12
-        ? say(numberWords(Number(word)), language)
-        : say([...word].map((d) => ONES[d]).join(' '), language);
+  function loosely(word, language) {
+    return [...word]
+      .map(
+        (c) =>
+          lookup(c.toUpperCase(), language) ?? (/\d/.test(c) ? lookup(ONES[c], language) : null)
+      )
+      .filter(Boolean)
+      .join('');
+  }
+
+  const joined = (parts) =>
+    parts.reduce((all, w) => (all === null || w === null ? null : `${all} ${w}`.trim()), '');
+
+  function known(token, language, deferring) {
+    const word = token.replace(/^[^\p{L}\p{N}']+|[^\p{L}\p{N}'%]+$/gu, '');
+    if (!word) return '';
     if (word.includes('-'))
-      return word
-        .split('-')
-        .filter(Boolean)
-        .map((w) => known(w, language))
-        .reduce((all, w) => (all === null || w === null ? null : `${all} ${w}`.trim()), '');
-    const found = lookup(word, language) ?? stemmed(word, language);
-    if (found) return found;
+      return joined(
+        word
+          .split('-')
+          .filter(Boolean)
+          .map((w) => known(w, language, deferring))
+      );
+    const direct = entry(word, language);
+    if (direct !== null) return deferring && verbal(direct) ? null : pick(direct, ['DEFAULT']);
+    const stem = stemmed(word, language);
+    if (stem) return stem;
+    const words = expand(word);
+    if (words !== null) return joined(words.split(' ').map((w) => known(w, language, deferring)));
     return /^[A-Z]{2,5}$/.test(word) ? spelled(word, language) : null;
   }
 
-  function say(text, language) {
-    const words = text.split(' ').map((w) => lookup(w, language));
-    return words.every(Boolean) ? words.join(' ') : null;
+  async function guessed(rows, language, backup) {
+    const asked = rows.filter((row) => row.some((t) => t.ipa === null));
+    if (asked.length === 0) return;
+    if (!backup) {
+      for (const t of asked.flat()) t.ipa ??= loosely(t.text, language);
+      return;
+    }
+    const lines = await backup.phonemize(
+      asked.map((row) => row.map((t) => t.text).join(' ')),
+      language
+    );
+    asked.forEach((row, i) => {
+      const words = lines[i].split(/\s+/).filter(Boolean);
+      if (words.length !== row.length) row.splice(0, row.length, { text: '', ipa: lines[i] });
+      else
+        row.forEach((t, j) => {
+          t.ipa ??= words[j];
+        });
+    });
   }
 
   return {
     name: 'misaki',
     languages: Object.keys(lexicons),
     async phonemize(parts, language) {
-      const words = parts.map((part) => part.split(/(\s+)/));
-      const unknown = new Set();
-      const said = new Map();
-      for (const tokens of words)
-        for (const token of tokens) {
-          if (!/\S/.test(token) || said.has(token)) continue;
-          const found = known(token, language);
-          if (found === null) unknown.add(token);
-          else said.set(token, found);
-        }
-      if (unknown.size > 0) {
-        const backup = fallback(language);
-        const list = [...unknown];
-        const guesses = backup
-          ? await backup.phonemize(list, language)
-          : list.map((w) => spelled(w, language) ?? '');
-        list.forEach((w, i) => {
-          said.set(w, guesses[i]);
-        });
-      }
-      return words.map((tokens) =>
-        tokens
-          .map((t) => (/\S/.test(t) ? said.get(t) : ' '))
-          .join('')
+      const backup = fallback(language);
+      const rows = parts.map((part) =>
+        part
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((text) => ({ text, ipa: known(text, language, Boolean(backup)) }))
+      );
+      await guessed(rows, language, backup);
+      return rows.map((row) =>
+        row
+          .map((t) => t.ipa)
+          .join(' ')
           .replace(/\s+/g, ' ')
           .trim()
       );
