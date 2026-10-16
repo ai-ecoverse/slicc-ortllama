@@ -89,17 +89,41 @@ async function onnxVariants(has) {
   return null;
 }
 
-async function onnxParts({ files, external, has, stem, variants, embedDtype }) {
-  const fallback = DTYPES[embedDtype] === undefined ? 'fp32' : embedDtype;
+function dtypeOr(dtype) {
+  return DTYPES[dtype] === undefined ? 'fp32' : dtype;
+}
+
+async function sibling(files, external, has, name, variant, dtype) {
+  const own = (await has(`${name}${DTYPES[variant]}.onnx`)) ? variant : dtypeOr(dtype);
+  return part(files, external, 'onnx/', `${name}${DTYPES[own]}.onnx`);
+}
+
+async function onnxParts({ files, external, has, stem, variants, dtypes }) {
   const parts = {};
   for (const variant of variants) {
     const decoder = await part(files, external, 'onnx/', `${stem}${DTYPES[variant]}.onnx`);
-    let embed = null;
-    if (stem === 'decoder_model_merged') {
-      const own = (await has(`embed_tokens${DTYPES[variant]}.onnx`)) ? variant : fallback;
-      embed = await part(files, external, 'onnx/', `embed_tokens${DTYPES[own]}.onnx`);
+    if (stem !== 'decoder_model_merged') {
+      parts[variant] = { decoder, embed: null };
+      continue;
     }
-    parts[variant] = { decoder, embed };
+    const embed = await sibling(
+      files,
+      external,
+      has,
+      'embed_tokens',
+      variant,
+      dtypes?.embed_tokens
+    );
+    const vision = await sibling(
+      files,
+      external,
+      has,
+      'vision_encoder',
+      variant,
+      dtypes?.vision_encoder
+    );
+    const known = await has(vision.model.slice('onnx/'.length));
+    parts[variant] = { decoder, embed, ...(known ? { vision } : {}) };
   }
   return parts;
 }
@@ -121,7 +145,7 @@ async function transformersLayout(files) {
     has,
     stem,
     variants,
-    embedDtype: tjs.dtype?.embed_tokens,
+    dtypes: tjs.dtype,
   });
   const text = textConfig(config);
   const preferred = tjs.dtype?.[stem];
@@ -208,5 +232,16 @@ export function includePatterns(info, variant) {
     ...meta,
     `${p.decoder.model}*`,
     ...(p.embed ? [`${p.embed.model}*`] : []),
+    ...(p.vision
+      ? ['preprocessor_config.json', 'processor_config.json', `${p.vision.model}*`]
+      : []),
   ];
+}
+
+export async function hasVision(files, info, variant) {
+  const vision = info.parts[variant]?.vision;
+  if (!vision) return false;
+  for (const rel of ['preprocessor_config.json', vision.model, ...vision.data])
+    if (!(await files.exists(rel))) return false;
+  return true;
 }

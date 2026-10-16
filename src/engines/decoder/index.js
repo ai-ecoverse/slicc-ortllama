@@ -1,6 +1,7 @@
 import { Tokenizer } from '@huggingface/tokenizers';
 import { createChat } from './chat.js';
-import { detectLayout, includePatterns, neededFiles } from './layout.js';
+import { detectLayout, hasVision, includePatterns, neededFiles } from './layout.js';
+import { pixtralConfig } from './pixtral.js';
 import { pickProfile } from './profiles.js';
 import { openModel } from './session.js';
 
@@ -30,13 +31,36 @@ async function shapeOf(files, info, variant) {
   };
 }
 
+async function visionOf(files, tokenizer, model) {
+  const pre = await files.json('preprocessor_config.json');
+  const processor = (await files.exists('processor_config.json'))
+    ? await files.json('processor_config.json')
+    : {};
+  const config = await files.json('config.json');
+  const id = (name, fallback) => tokenizer.token_to_id(processor[name] ?? fallback);
+  return {
+    cfg: pixtralConfig(pre, config),
+    ids: {
+      img: id('image_token', '[IMG]'),
+      brk: id('image_break_token', '[IMG_BREAK]'),
+      end: id('image_end_token', '[IMG_END]'),
+    },
+    encode: model.encodeImage,
+  };
+}
+
 export const decoder = {
   name: 'decoder',
   capability: 'chat',
   async detect(files) {
     const layout = await detectLayout(files);
     if (!layout) return null;
-    return { ...layout, inputModalities: ['text'], outputModalities: ['text'] };
+    const image = await hasVision(files, layout, layout.defaultVariant);
+    return {
+      ...layout,
+      inputModalities: image ? ['text', 'image'] : ['text'],
+      outputModalities: ['text'],
+    };
   },
   async missing(files, info, variant) {
     const out = [];
@@ -51,10 +75,12 @@ export const decoder = {
     const template = await templateSource(files, info);
     const profile = pickProfile(template, overrides.profile);
     const tokenizer = new Tokenizer(profile.tokenizer(tokenizerJson), tokenizerConfig);
+    const image = await hasVision(files, info, variant);
+    const part = info.parts[variant];
     const model = await openModel({
       backend,
       files,
-      part: info.parts[variant],
+      part: image ? part : { ...part, vision: null },
       shape: await shapeOf(files, info, variant),
     });
     const g = info.generation ?? {};
@@ -74,6 +100,7 @@ export const decoder = {
         topK: g.top_k,
       },
       prefill: overrides.prefill,
+      vision: image ? await visionOf(files, tokenizer, model) : null,
     });
     return {
       profile: profile.name,

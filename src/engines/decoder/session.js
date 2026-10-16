@@ -140,11 +140,12 @@ export async function openModel({ backend, files, part, shape }) {
     return toFloat32(data.subarray((rows - 1) * vocab, rows * vocab));
   }
 
-  async function forward(ids, past, pastLen, wantLogits) {
+  async function forward(ids, past, pastLen, wantLogits, splice = null) {
     const feeds = feedsFor(ids, pastLen);
     let out = null;
     try {
       if (inputs.has('inputs_embeds')) feeds.inputs_embeds = await embeddings(ids);
+      if (splice) splice(await feeds.inputs_embeds.getData(), feeds.inputs_embeds.dims.at(-1));
       out = await decoder.run({ ...feeds, ...past }, fetches);
       const logits = wantLogits ? await lastRow(out.logits) : null;
       const next = {};
@@ -179,9 +180,30 @@ export async function openModel({ backend, files, part, shape }) {
     for (const t of Object.values(past)) t?.dispose?.();
   }
 
+  let visionSession = null;
+  let visionReady = null;
+
+  async function encodeImage(pixels) {
+    visionSession ??= sessionFor({ ort, files, part: part.vision, options: base, node }).catch(
+      (error) => {
+        visionSession = null;
+        throw error;
+      }
+    );
+    const session = await visionSession;
+    visionReady = session;
+    const input = new ort.Tensor('float32', pixels.data, [1, 3, pixels.height, pixels.width]);
+    const out = await session.run({ [session.inputNames[0]]: input });
+    const features = out[session.outputNames[0]];
+    const data = toFloat32(await features.getData());
+    features.dispose?.();
+    return data;
+  }
+
   return {
     emptyPast,
     forward,
+    encodeImage: part.vision ? encodeImage : null,
     slice,
     dispose,
     bytesPerToken: pasts.length * heads * dim * (kvType === 'float16' ? 2 : 4),
@@ -189,6 +211,7 @@ export async function openModel({ backend, files, part, shape }) {
       await decoder.release();
       await embed?.release();
       await slicer?.release();
+      await visionReady?.release();
     },
   };
 }

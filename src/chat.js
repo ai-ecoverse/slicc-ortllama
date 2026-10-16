@@ -1,4 +1,5 @@
 import { badRequest } from './http/errors.js';
+import { IMAGE_LIMITS, imageFromUrl } from './images.js';
 import { PRIORITY } from './runtime.js';
 
 const ROLES = new Set(['system', 'developer', 'user', 'assistant', 'tool']);
@@ -7,21 +8,53 @@ const TOOL_NAME = /^[A-Za-z0-9_.-]{1,64}$/;
 
 const isObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-function content(value, at, { nullable = false } = {}) {
+const DETAILS = new Set(['auto', 'low', 'high']);
+
+function imagePart(part, where) {
+  const ref = typeof part.image_url === 'string' ? { url: part.image_url } : part.image_url;
+  if (typeof ref?.url !== 'string')
+    throw badRequest(`${where}.image_url.url must be a string`, 'messages');
+  if (ref.detail !== undefined && !DETAILS.has(ref.detail))
+    throw badRequest(`${where}.image_url.detail must be auto, low or high`, 'messages');
+  return { type: 'image', url: ref.url, detail: ref.detail ?? 'auto' };
+}
+
+function content(value, at, { nullable = false, images = false } = {}) {
   if (typeof value === 'string') return value;
   if ((value === null || value === undefined) && nullable) return null;
   if (!Array.isArray(value))
     throw badRequest(`${at}.content must be a string or an array of parts`, 'messages');
   return value.map((part, j) => {
+    const where = `${at}.content[${j}]`;
+    if (part?.type === 'image_url' && images) return imagePart(part, where);
     if (part?.type !== 'text')
       throw badRequest(
-        `${at}.content[${j}] is ${part?.type ?? 'not a part'}; this model accepts text only`,
+        `${where} is ${part?.type ?? 'not a part'}; ${images ? 'user messages take text and image_url parts' : 'only user messages take images'}`,
         'messages'
       );
     if (typeof part.text !== 'string')
-      throw badRequest(`${at}.content[${j}].text must be a string`, 'messages');
+      throw badRequest(`${where}.text must be a string`, 'messages');
     return { type: 'text', text: part.text };
   });
+}
+
+export function imageParts(request) {
+  return request.messages.flatMap((m) =>
+    Array.isArray(m.content) ? m.content.filter((p) => p.type === 'image') : []
+  );
+}
+
+export async function attachImages(request, limits = IMAGE_LIMITS) {
+  const parts = imageParts(request);
+  if (parts.length > limits.maxImages)
+    throw badRequest(
+      `a request takes at most ${limits.maxImages} images, got ${parts.length}`,
+      'messages'
+    );
+  for (const part of parts) {
+    part.image = { ...(await imageFromUrl(part.url, { limits })), detail: part.detail };
+    delete part.url;
+  }
 }
 
 function toolCalls(value, at) {
@@ -65,7 +98,7 @@ function messages(list) {
         tool_call_id: String(m.tool_call_id ?? ''),
         content: content(m.content, at),
       };
-    return { role: m.role, content: content(m.content, at) };
+    return { role: m.role, content: content(m.content, at, { images: m.role === 'user' }) };
   });
 }
 
@@ -235,6 +268,9 @@ export function chatRoute({ catalog, runtime, now = Date.now, newId = () => cryp
       const resolved = await catalog.resolve(parsed.model);
       if (resolved.engine.capability !== 'chat')
         throw badRequest(`model ${resolved.id} does not answer chat completions`, 'model');
+      if (imageParts(parsed.request).length > 0 && !resolved.info.inputModalities.includes('image'))
+        throw badRequest(`model ${resolved.id} takes no images`, 'messages');
+      await attachImages(parsed.request);
       const id = `chatcmpl-${newId().replaceAll('-', '')}`;
       const created = Math.floor(now() / 1000);
       const base = { id, created, model: parsed.model };

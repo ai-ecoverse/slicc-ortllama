@@ -76,8 +76,8 @@ export const systemone = {
     return {
       probs: (record) => kev.probs(record),
       async systemOne(request) {
-        if (request.image !== undefined)
-          throw badRequest('images are not accepted on /v1/systemone yet', 'image');
+        if (request.image !== undefined && !kev.acceptsImages)
+          throw badRequest('this System One model takes no images', 'image');
         try {
           return await kev.systemOne(request);
         } catch (error) {

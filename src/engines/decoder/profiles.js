@@ -31,12 +31,31 @@ export function textOf(content) {
   return content.map((part) => part.text ?? '').join('');
 }
 
+const asParts = (content) =>
+  typeof content === 'string' ? [{ type: 'text', text: content }] : content;
+
+function joined(a, b) {
+  if (typeof a === 'string' && typeof b === 'string') return `${a}\n\n${b}`;
+  return [...asParts(a), { type: 'text', text: '\n\n' }, ...asParts(b)];
+}
+
+export function hasImages(content) {
+  return Array.isArray(content) && content.some((part) => part.type === 'image');
+}
+
+function userContent(content, escape) {
+  if (!hasImages(content)) return escape.escape(textOf(content));
+  return content.map((part) =>
+    part.type === 'image' ? { type: 'image' } : { type: 'text', text: escape.escape(part.text) }
+  );
+}
+
 function merged(messages) {
   const out = [];
   for (const m of messages) {
     const last = out.at(-1);
     if (m.role === 'user' && last?.role === 'user') {
-      last.content = `${last.content}\n\n${m.content}`;
+      last.content = joined(last.content, m.content);
       continue;
     }
     out.push({ ...m });
@@ -79,7 +98,7 @@ function chatMessages(messages, escape, markers = {}) {
         tool_call_id: escape.escape(m.tool_call_id),
         content: escape.escape(textOf(m.content)),
       };
-    return { role: 'user', content: escape.escape(textOf(m.content)) };
+    return { role: 'user', content: userContent(m.content, escape) };
   });
   const head = system.length > 0 ? [{ role: 'system', content: system.join('\n\n') }] : [];
   return [...head, ...merged(rest)];
