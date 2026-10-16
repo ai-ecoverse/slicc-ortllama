@@ -2,6 +2,7 @@ import { createServer as createHttpServer } from 'node:http';
 import { errorBody, HttpError } from './errors.js';
 
 const MAX_BODY = 16 * 1024 * 1024;
+const DRAIN_MS = 1000;
 
 const LOOPBACK = /^(localhost|127(\.\d{1,3}){3}|\[::1\]|::1|host\.slicc\.internal|.+\.localhost)$/;
 
@@ -26,6 +27,13 @@ export function allowedOrigin(origin, extra = []) {
     return null;
   }
   return LOOPBACK.test(url.hostname) && url.hostname !== 'host.slicc.internal' ? origin : null;
+}
+
+function stopReading(req, ms = DRAIN_MS) {
+  if (req.complete) return;
+  const timer = setTimeout(() => req.destroy(), ms);
+  timer.unref?.();
+  req.once('end', () => clearTimeout(timer));
 }
 
 function corsHeaders(req, options) {
@@ -124,6 +132,7 @@ export function createHandler(routes, options = {}) {
     } catch (error) {
       if (controller.signal.aborted) return;
       const { status, body } = errorBody(error);
+      if (status === 413) res.once('finish', () => stopReading(req, options.drainMs));
       send(status, body);
     }
   };
