@@ -76,12 +76,17 @@ export const systemone = {
     return {
       probs: (record) => kev.probs(record),
       async systemOne(request) {
-        if (request.image !== undefined)
-          throw badRequest('images are not accepted on /v1/systemone yet', 'image');
+        if (request.image !== undefined && !kev.acceptsImages)
+          throw badRequest('this System One model takes no images', 'image');
         try {
           return await kev.systemOne(request);
         } catch (error) {
           if (error instanceof ValidationError) throw badRequest(error.message);
+          if (request.image !== undefined && error instanceof RangeError)
+            throw badRequest(
+              `the image does not fit this model's vision encoder: ${error.message}`,
+              'image'
+            );
           if (error instanceof ContextOverflow)
             throw new HttpError(422, error.message, { code: 'context_length_exceeded' });
           throw error;

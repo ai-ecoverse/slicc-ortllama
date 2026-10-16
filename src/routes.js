@@ -1,5 +1,6 @@
 import { chatRoute } from './chat.js';
 import { badRequest } from './http/errors.js';
+import { requestImage } from './images.js';
 import { PRIORITY } from './runtime.js';
 import { transcriptionRoutes } from './transcription.js';
 
@@ -45,7 +46,9 @@ export function createRoutes({ catalog, runtime, version }) {
         const resolved = await catalog.resolve(body.model ?? 'decisions');
         if (resolved.engine.capability !== 'systemone')
           throw badRequest(`model ${resolved.id} does not answer System One requests`, 'model');
-        const { model, ...request } = body;
+        const { model, image, ...text } = body;
+        const request =
+          image === undefined ? text : { ...text, image: await requestImage(image, resolved) };
         const result = await runtime.use(
           resolved,
           PRIORITY.decisions,

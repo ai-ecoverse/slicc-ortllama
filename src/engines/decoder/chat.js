@@ -4,6 +4,7 @@ import { createPrefixCache } from './prefix.js';
 import { checkTools, escaper } from './profiles.js';
 import { createRng, pick } from './sample.js';
 import { createParser, stopFilter } from './stream.js';
+import { expandImages, requestImages, splicer } from './vision.js';
 
 export const PREFILL_CHUNK = 256;
 
@@ -17,7 +18,7 @@ export function contextError(tokens, limit) {
   );
 }
 
-function summary(ids, run, times) {
+function summary(ids, run, times, vision) {
   const prefillMs = times.decode - times.start;
   const decodeMs = times.end - times.decode;
   const fresh = ids.length - run.cached;
@@ -37,6 +38,7 @@ function summary(ids, run, times) {
       predicted_n: run.generated,
       predicted_ms: decodeMs,
       predicted_per_second: (run.generated * 1000) / decodeMs,
+      ...(vision.images > 0 ? { image_n: vision.images, image_ms: vision.ms } : {}),
     },
   };
 }
@@ -53,6 +55,7 @@ export function createChat({
   eos = [],
   defaults = {},
   prefill = PREFILL_CHUNK,
+  vision = null,
   now = () => performance.now(),
 }) {
   const added = tokenizerJson.added_tokens;
@@ -131,22 +134,25 @@ export function createChat({
     return state;
   }
 
-  async function advance(run, ids, wantLogits) {
+  async function advance(run, ids, wantLogits, splice = null) {
     const past = run.past;
     run.past = null;
-    const out = await model.forward(ids, past, run.seq.length, wantLogits);
+    const out = await model.forward(ids, past, run.seq.length, wantLogits, splice);
     run.past = out.past;
     return out;
   }
 
-  async function prefillAll(run, ids, signal, yieldTurn) {
+  async function prefillAll(run, prompt, signal, yieldTurn) {
+    const { ids, keys, spans } = prompt;
     while (run.seq.length < ids.length) {
       if (signal?.aborted) throw signal.reason;
-      const chunk = ids.slice(run.seq.length, run.seq.length + prefill);
-      const last = run.seq.length + chunk.length === ids.length;
-      const out = await advance(run, chunk, last);
+      const from = run.seq.length;
+      const chunk = ids.slice(from, from + prefill);
+      const to = from + chunk.length;
+      const splice = await splicer(spans, from, to, vision, run.vision);
+      const out = await advance(run, chunk, to === ids.length, splice);
       run.logits = out.logits;
-      run.seq.push(...chunk);
+      run.seq.push(...keys.slice(from, to));
       await yieldTurn();
     }
   }
@@ -171,7 +177,14 @@ export function createChat({
 
   async function chat(request, { signal, emit, yieldTurn = async () => {} }) {
     checkTools(profile, request.tools);
-    const ids = render(request);
+    const images = requestImages(request.messages);
+    if (images.length > 0 && !vision)
+      throw badRequest(
+        'this model takes no images: its vision encoder is not in the cache',
+        'messages'
+      );
+    const prompt = expandImages(render(request), images, vision);
+    const { ids } = prompt;
     if (ids.length >= contextLength) throw contextError(ids.length, contextLength);
     const { banned, forced } = constraints(request);
     const budget = Math.min(
@@ -189,18 +202,19 @@ export function createChat({
     emit({ type: 'start', promptTokens: ids.length });
     const out = output(request, emit);
     const times = { start: now() };
-    const taken = await cache.take(ids);
+    const taken = await cache.take(prompt.keys);
     const run = {
       past: taken.past,
       cached: taken.length,
-      seq: ids.slice(0, taken.length),
+      seq: prompt.keys.slice(0, taken.length),
+      vision: { images: 0, ms: 0 },
       logits: null,
       generated: 0,
       reasoning: 0,
     };
     let finish;
     try {
-      await prefillAll(run, ids, signal, yieldTurn);
+      await prefillAll(run, prompt, signal, yieldTurn);
       times.decode = now();
       finish = await decodeAll(run, { budget, forced, sampling, out, signal, yieldTurn });
       out.end();
@@ -209,7 +223,7 @@ export function createChat({
     }
     times.end = now();
     if (out.toolCalls > 0 && finish === 'stop' && !out.stopped) finish = 'tool_calls';
-    return { finishReason: finish, ...summary(ids, run, times) };
+    return { finishReason: finish, ...summary(ids, run, times, run.vision) };
   }
 
   return { chat, render, cache };
