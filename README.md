@@ -12,7 +12,15 @@ The plan and milestones are in [#2](https://github.com/ai-ecoverse/slicc-ortllam
 ```sh
 npm install -g @ai-ecoverse/slicc-ortllama onnxruntime-node
 hf download ai-ecoverse/kev.js --include 'kev-0.8b/*'
+hf download mistralai/Ministral-3-3B-Instruct-2512-ONNX --include '*.json' chat_template.jinja 'onnx/decoder_model_merged_q4f16.onnx*' 'onnx/embed_tokens_q4f16.onnx*'
 ortllama serve
+```
+
+```sh
+curl -s localhost:11435/v1/chat/completions -H 'content-type: application/json' -d '{
+  "model": "chat",
+  "messages": [{ "role": "user", "content": "What is the capital of France?" }]
+}'
 ```
 
 ```sh
@@ -42,12 +50,15 @@ In slicc-kernel, `onnxruntime-node` is not needed: the `slicc` export condition 
 | Route | |
 | --- | --- |
 | `GET /v1/models` | models and role aliases; System One models list `decisions` in `architecture.output_modalities` |
+| `POST /v1/chat/completions` | OpenAI chat completions, streamed as `chat.completion.chunk`s with `stream: true`, on the decoder engine |
 | `POST /v1/systemone` | TypeSafe's System One protocol, on [kev.js](https://github.com/ai-ecoverse/kev.js) |
 | `POST /v1/audio/transcriptions` | OpenAI's transcription API on Whisper: multipart `file`, `model`, `language`, `prompt`, `response_format` (`json`, `verbose_json`, `text`, `srt`, `vtt`); WAV or 16-bit `audio/pcm` (`;rate=N`, default 24 kHz) |
 | `GET /v1/realtime?intent=transcription` | OpenAI's realtime transcription over WebSocket (subprotocol `realtime`): `session.update`, `input_audio_buffer.append`/`commit`/`clear` in; `session.created`/`updated`, `input_audio_buffer.speech_started`/`speech_stopped`/`committed`/`cleared`, `conversation.item.input_audio_transcription.delta`/`completed` and `error` out. `audio/pcm` at 8–48 kHz (24 kHz by default), `server_vad` on Silero VAD or manual commits (`turn_detection: null`) |
 | `GET /ortllama/ps` | loaded models |
 
-Errors use OpenAI's envelope, `{ "error": { "message", "type", "param", "code" } }`. Chat and speech follow in the milestones of #2.
+Errors use OpenAI's envelope, `{ "error": { "message", "type", "param", "code" } }`. Speech follows in the milestones of #2.
+
+Chat completions take `messages` (`system`, `developer`, `user`, `assistant` with `tool_calls`, `tool`), `tools`, `tool_choice`, `stream`, `stream_options.include_usage`, `max_completion_tokens` or `max_tokens`, `temperature`, `top_p`, `top_k`, `seed`, `stop` and `reasoning_effort`, and ignore `store`. Text only for now. Streams carry `delta.content`, `delta.reasoning_content` and `delta.tool_calls`; the last chunk has `finish_reason` (`stop`, `length` or `tool_calls`) and llama.cpp-style `timings`, followed by a usage chunk when asked. `usage.prompt_tokens_details.cached_tokens` counts the prompt tokens served from the prefix cache, which keeps the attention state of recent conversations, so an agent that resends its history pays only for the new turn. A prompt longer than the context window (the model's, at most 32768 tokens) is refused with `400` and `code: "context_length_exceeded"`, never truncated. A closed connection stops generation.
 
 Transcriptions answer `{ text, language, duration, segments, usage: { type: "duration", seconds } }`. Audio longer than 30 seconds is decoded in windows that follow Whisper's timestamps; the language is detected when the request names none. Other audio formats answer `400` for now.
 
@@ -59,11 +70,11 @@ A realtime session re-decodes the growing turn about every 500 ms of audio and s
 
 ortllama downloads nothing. It reads the Hugging Face cache that `hf download` fills (`HF_HUB_CACHE`, else `HF_HOME/hub`, else `~/.cache/huggingface/hub`), through its `refs/` and `snapshots/`. A model ID is a Hub ID: `org/repo[/subfolder][@revision][:variant]`, such as `ai-ecoverse/kev.js/kev-0.8b:q8f32`. A model that isn't cached, or a variant with missing files, is answered with `404` and the `hf download` command that fetches it.
 
-Clients can ask for a role instead of a model: `chat`, `chat-reasoning`, `decisions`, `transcribe`, `realtime-transcribe`, `speech` or `vad`. `ortllama alias decisions <model>` changes what a role means, so swapping a model changes no client. `decisions` defaults to `ai-ecoverse/kev.js/kev-0.8b:q8f32`, `transcribe` and `realtime-transcribe` to `onnx-community/whisper-tiny`, and `vad` to `onnx-community/silero-vad` (fetch it with `hf download onnx-community/silero-vad --include onnx/model.onnx`).
+Clients can ask for a role instead of a model: `chat`, `chat-reasoning`, `decisions`, `transcribe`, `realtime-transcribe`, `speech` or `vad`. `ortllama alias decisions <model>` changes what a role means, so swapping a model changes no client. `chat` defaults to `mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16`, `decisions` to `ai-ecoverse/kev.js/kev-0.8b:q8f32`, `transcribe` and `realtime-transcribe` to `onnx-community/whisper-tiny`, and `vad` to `onnx-community/silero-vad` (fetch it with `hf download onnx-community/silero-vad --include onnx/model.onnx`).
 
 Whisper models are the transformers.js ONNX exports (`config.json` with `model_type: "whisper"`, `onnx/encoder_model*.onnx` and `onnx/decoder_model_merged*.onnx`, external `.onnx_data` included). Variants follow the file suffixes: `fp32`, `fp16`, `q8` (`_quantized`), `int8`, `uint8`, `q4`, `q4f16`, `bnb4`; the default is the first complete one in that order.
 
-Engines are picked by the files a model has, not by its name. Each engine in `src/engines/` gets ONNX Runtime from the caller and provides `detect`, `missing`, `include`, `load`, `checkOverrides` and `check`.
+Engines are picked by the files a model has, not by its name. The decoder engine runs the transformers.js layout (`onnx/decoder_model_merged*.onnx` with `embed_tokens*.onnx`, or `onnx/model*.onnx`; variants are its quantizations, such as `q4f16`) and the onnxruntime-genai layout (`genai_config.json`, one variant per folder), with the model's own chat template. A small profile per family, chosen from the template, parses tool calls and reasoning; Mistral's `[TOOL_CALLS]name[ARGS]{…}` and `[THINK]…[/THINK]` are built in, and control-token names in client text are escaped so they cannot inject one. Each engine in `src/engines/` gets ONNX Runtime from the caller and provides `detect`, `missing`, `include`, `load`, `checkOverrides` and `check`.
 
 ## Configuration
 
@@ -82,4 +93,4 @@ Engines are picked by the files a model has, not by its name. Each engine in `sr
 
 ## Develop
 
-Node ≥ 24. `npm run lint` runs `slicc-lint`. `npm test` runs the integration tests; the Kev, Whisper and realtime tests run when `ai-ecoverse/kev.js/kev-0.8b`, `onnx-community/whisper-tiny` and `onnx-community/silero-vad` are in the Hugging Face cache (`ORTLLAMA_REQUIRE_MODEL=1` makes a missing model a failure). Unit tests stay local in `test/unit/` (`npm run test:unit`). Releases use semantic-release on `main`.
+Node ≥ 24. `npm run lint` runs `slicc-lint`. `npm test` runs the integration tests; the Kev, Whisper, realtime and chat tests run when `ai-ecoverse/kev.js/kev-0.8b`, `onnx-community/whisper-tiny`, `onnx-community/silero-vad` and `mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16` are in the Hugging Face cache (`ORTLLAMA_REQUIRE_MODEL=1` makes a missing model a failure). Unit tests stay local in `test/unit/` (`npm run test:unit`). Releases use semantic-release on `main`.

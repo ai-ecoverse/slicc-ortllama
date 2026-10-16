@@ -87,6 +87,23 @@ export function authorized(req, apiKey) {
   return header === `Bearer ${apiKey}`;
 }
 
+async function sendEvents(res, events, headers) {
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache',
+    ...headers,
+  });
+  try {
+    for await (const event of events) {
+      if (res.destroyed) return;
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    }
+    res.end('data: [DONE]\n\n');
+  } catch (error) {
+    res.end(`data: ${JSON.stringify(errorBody(error).body)}\n\n`);
+  }
+}
+
 export function createHandler(routes, options = {}) {
   return async (req, res) => {
     const cors = corsHeaders(req, options);
@@ -128,6 +145,7 @@ export function createHandler(routes, options = {}) {
       const read = route.raw ? readBody : readJson;
       const body = req.method === 'POST' ? await read(req, options.maxBody) : undefined;
       const result = await route.handle({ req, url, body, signal: controller.signal });
+      if (result?.events) return await sendEvents(res, result.events, cors);
       send(result?.status ?? 200, result?.body ?? result);
     } catch (error) {
       if (controller.signal.aborted) return;
