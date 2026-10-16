@@ -1,5 +1,6 @@
+import { hubCache } from '../hf/cache.js';
 import { badRequest } from '../http/errors.js';
-import { loadEspeak } from '../kokoro/espeak.js';
+import { loadPhonemizers, phonemizerOrder } from '../kokoro/phonemizers/index.js';
 import { fixPhonemes, normalizeEnglish, splitPunctuation } from '../kokoro/text.js';
 import { DEFAULT_VOICE, LANGUAGES, VOICES } from '../kokoro/voices.js';
 
@@ -45,6 +46,10 @@ async function availableVoices(files) {
   return out;
 }
 
+function environmentPhonemizers(env) {
+  return loadPhonemizers({ candidates: phonemizerOrder(env), cache: hubCache(env), env });
+}
+
 export const kokoro = {
   name: 'kokoro',
   capability: 'speech',
@@ -69,12 +74,12 @@ export const kokoro = {
     return out;
   },
   include: (_info, variant) => ['config.json', 'tokenizer.json', VARIANTS[variant], 'voices/*'],
-  async load({ backend, files, variant, overrides = {}, espeak = loadEspeak }) {
+  async load({ backend, files, variant, overrides = {}, phonemizers = environmentPhonemizers }) {
     const { ort } = backend;
-    const [model, tokenizer, phonemizer, voices] = await Promise.all([
+    const phonemizer = await phonemizers(backend.env ?? process.env);
+    const [model, tokenizer, voices] = await Promise.all([
       files.read(VARIANTS[variant]),
       files.json('tokenizer.json'),
-      espeak(),
       availableVoices(files),
     ]);
     const session = await ort.InferenceSession.create(model, {
@@ -100,7 +105,7 @@ export const kokoro = {
       const spoken = parts.filter((p) => !p.punct && /\S/.test(p.text));
       const lines = await phonemizer.phonemize(
         spoken.map((p) => p.text),
-        LANGUAGES[prefix].espeak
+        LANGUAGES[prefix].language
       );
       const said = new Map(spoken.map((p, i) => [p, lines[i]]));
       const joined = parts.map((p) => said.get(p) ?? p.text).join('');
@@ -154,6 +159,7 @@ export const kokoro = {
 
     return {
       voices,
+      phonemizers: phonemizer.names,
       sampleRate: SAMPLE_RATE,
       phonemes,
       tokens,

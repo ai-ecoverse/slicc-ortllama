@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { speak } from '@ai-ecoverse/pi-audio';
 import { registerOpenAI } from '@ai-ecoverse/pi-audio/openai';
-import { openCatalog, startServer } from '../../src/index.js';
+import { hubCache, openCatalog, startServer } from '../../src/index.js';
 import { speechModel } from '../../src/pi-audio.js';
 
 const KOKORO = 'onnx-community/Kokoro-82M-v1.0-ONNX';
@@ -156,5 +159,44 @@ describe('Kokoro speech through pi-audio', { skip }, () => {
     const long = await post({ input: 'a'.repeat(80_000) });
     assert.equal(long.status, 400);
     assert.match((await long.json()).error.message, /at most 4096 characters/);
+  });
+});
+
+describe('Kokoro without a phonemizer', { skip }, () => {
+  let server;
+
+  before(async () => {
+    const real = hubCache(process.env);
+    const cache = await mkdtemp(join(tmpdir(), 'ortllama-nophonemizer-'));
+    const repo = 'models--onnx-community--Kokoro-82M-v1.0-ONNX';
+    await symlink(join(real, repo), join(cache, repo));
+    server = await startServer({
+      env: {
+        ...process.env,
+        HF_HUB_CACHE: cache,
+        ORTLLAMA_PHONEMIZERS: 'misaki',
+        ORTLLAMA_API_KEY: '',
+      },
+      port: 0,
+    });
+  });
+  after(() => server?.close());
+
+  test('still lists Kokoro and answers speech with 501 naming what to install', async () => {
+    const { data } = await (await fetch(`${server.url}/v1/models`)).json();
+    assert.ok(data.some((m) => m.id === KOKORO && m.ortllama.engine === 'kokoro'));
+    const response = await fetch(`${server.url}/v1/audio/speech`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ input: 'Hello.', response_format: 'pcm' }),
+    });
+    assert.equal(response.status, 501);
+    const { error } = await response.json();
+    assert.equal(error.code, 'engine_unavailable');
+    assert.match(
+      error.message,
+      /install one of: misaki \(hf download hexgrad\/misaki --repo-type dataset/
+    );
+    assert.match(error.message, /espeak-ng \(npm install espeak-ng\)/);
   });
 });

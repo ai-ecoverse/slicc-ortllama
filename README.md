@@ -77,11 +77,21 @@ A realtime session re-decodes the growing turn about every 500 ms of audio and s
 
 ```sh
 hf download onnx-community/Kokoro-82M-v1.0-ONNX --include config.json tokenizer.json onnx/model.onnx 'voices/*'
+hf download hexgrad/misaki --repo-type dataset --include 'us_*.json' 'gb_*.json'
 curl -s localhost:11435/v1/audio/speech -H 'content-type: application/json' \
   -d '{ "input": "Hello from the kernel.", "voice": "bf_emma" }' > hello.wav
 ```
 
-Voices are Kokoro's American (`af_*`, `am_*`) and British English (`bf_*`, `bm_*`), Spanish (`e`), French (`f`), Hindi (`h`), Italian (`i`) and Brazilian Portuguese (`p`) voices; Japanese and Chinese are left out, since they have no phonemizer here. Phonemes come from the [espeak-ng](https://www.npmjs.com/package/espeak-ng) WASM build (GPL-3.0-or-later). Variants are the repo's quantizations (`fp32`, `fp16`, `q8`, `q8f16`, `q4`, `q4f16`, `uint8`, `uint8f16`); `fp32` is the default: it is the fastest on CPU, and `fp16`, though faster on WebGPU, comes out garbled there.
+Voices are Kokoro's American (`af_*`, `am_*`) and British English (`bf_*`, `bm_*`), Spanish (`e`), French (`f`), Hindi (`h`), Italian (`i`) and Brazilian Portuguese (`p`) voices; Japanese and Chinese are left out, since they have no phonemizer here. Variants are the repo's quantizations (`fp32`, `fp16`, `q8`, `q8f16`, `q4`, `q4f16`, `uint8`, `uint8f16`); `fp32` is the default: it is the fastest on CPU, and `fp16`, though faster on WebGPU, comes out garbled there.
+
+Kokoro needs a phonemizer, and ortllama ships none: npm phonemizers are imported at runtime wherever ortllama can find them, the misaki lexicon comes from the Hugging Face cache, and speech answers `501` with `code: "engine_unavailable"`, naming what to install, until one is there. They are tried in this order, and the first that knows a voice's language speaks it; `ORTLLAMA_PHONEMIZERS` (such as `phonemize,espeak-ng`) changes the order or leaves some out.
+
+| Phonemizer | Get it | Languages | Licence | |
+| --- | --- | --- | --- | --- |
+| `misaki` | `hf download hexgrad/misaki --repo-type dataset` (6–7 MB per accent) | English | Apache-2.0 | the lexicons of [misaki](https://github.com/hexgrad/misaki), the G2P Kokoro was trained with; words it does not know go to the next English phonemizer |
+| `espeak-ng` | `npm install espeak-ng` (18 MB) | all of the above | GPL-3.0-or-later | the only one for Spanish, French, Hindi, Italian and Portuguese |
+| `phonemize` | `npm install phonemize` (3 MB) | English | MIT | pure JavaScript rules and lexicon |
+| `phonemizer` | `npm install phonemizer` (2.6 MB) | English | labelled Apache-2.0, but bundles espeak-ng (GPL-3.0-or-later) | the same phonemes as `espeak-ng` |
 
 ```js
 import { speak } from '@ai-ecoverse/pi-audio';
@@ -104,7 +114,7 @@ Whisper models are the transformers.js ONNX exports (`config.json` with `model_t
 
 Engines are picked by the files a model has, not by its name. The decoder engine runs the transformers.js layout (`onnx/decoder_model_merged*.onnx` with `embed_tokens*.onnx`, or `onnx/model*.onnx`; variants are its quantizations, such as `q4f16`) and the onnxruntime-genai layout (`genai_config.json`, one variant per folder), with the model's own chat template and, when the export has one, its `vision_encoder*.onnx`. A small profile per family, chosen from the template, parses tool calls and reasoning; Mistral's `[TOOL_CALLS]name[ARGS]{…}` and `[THINK]…[/THINK]` are built in, and control-token names in client text are escaped so they cannot inject one. Each engine in `src/engines/` gets ONNX Runtime from the caller and provides `detect`, `missing`, `include`, `load`, `checkOverrides` and `check`.
 
-Model-specific libraries are never installed with ortllama. They are devDependencies here, and engines load them only when a model needs them, such as `@ai-ecoverse/kev.js` for System One. ortllama looks for each library next to itself, then in `ORTLLAMA_MODULE_PATH` (project folders that contain a `node_modules`), then in pnpm's global installs (`$PNPM_HOME/global/…`, including slicc-kernel's `/usr/local/share/pnpm`). A model whose library is missing is still listed, and requests for it answer `501` with code `engine_unavailable` and the package to install.
+Model-specific libraries are never installed with ortllama. They are devDependencies here, and engines load them only when a model needs them, such as `@ai-ecoverse/kev.js` for System One and `espeak-ng`, `phonemize` or `phonemizer` for Kokoro. ortllama looks for each library next to itself, then in `ORTLLAMA_MODULE_PATH` (project folders that contain a `node_modules`), then in pnpm's global installs (`$PNPM_HOME/global/…`, including slicc-kernel's `/usr/local/share/pnpm`). A model whose library is missing is still listed, and requests for it answer `501` with code `engine_unavailable` and the package to install.
 
 ## Configuration
 
@@ -119,8 +129,9 @@ Model-specific libraries are never installed with ortllama. They are devDependen
 | `ORTLLAMA_MAX_LOADED` | `1` | models kept loaded at once |
 | `ORTLLAMA_EP` | `webgpu,cpu` on Node, `webgpu,wasm` in the browser | execution providers, in order |
 | `ORTLLAMA_MODEL_PATH` | none | extra plain folders, listed as `local/<name>` |
-| `ORTLLAMA_MODULE_PATH` | none | project folders searched for model libraries such as `@ai-ecoverse/kev.js` |
+| `ORTLLAMA_MODULE_PATH` | none | project folders searched for model libraries such as `@ai-ecoverse/kev.js` and `espeak-ng` |
 | `ORTLLAMA_ORT_LOG_LEVEL` | `error` | ONNX Runtime's log level |
+| `ORTLLAMA_PHONEMIZERS` | `misaki,espeak-ng,phonemize,phonemizer` | Kokoro's phonemizers, in order |
 
 ## Develop
 

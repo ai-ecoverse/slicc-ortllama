@@ -1,11 +1,11 @@
 export const LANGUAGES = {
-  a: { espeak: 'en-us', language: 'en-US' },
-  b: { espeak: 'en-gb', language: 'en-GB' },
-  e: { espeak: 'es', language: 'es-ES' },
-  f: { espeak: 'fr-fr', language: 'fr-FR' },
-  h: { espeak: 'hi', language: 'hi-IN' },
-  i: { espeak: 'it', language: 'it-IT' },
-  p: { espeak: 'pt-br', language: 'pt-BR' },
+  a: { language: 'en-US' },
+  b: { language: 'en-GB' },
+  e: { language: 'es-ES' },
+  f: { language: 'fr-FR' },
+  h: { language: 'hi-IN' },
+  i: { language: 'it-IT' },
+  p: { language: 'pt-BR' },
 };
 
 export const VOICES = [
