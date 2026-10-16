@@ -35,7 +35,7 @@ hf download onnx-community/whisper-tiny --include '*.json' 'onnx/encoder_model.o
 curl -s localhost:11435/v1/audio/transcriptions -F file=@clip.wav -F response_format=verbose_json
 ```
 
-In slicc-kernel, `onnxruntime-node` is not needed: the `slicc` export condition picks `onnxruntime-web`. It needs slicc-jsh 0.29.10 or later, which keeps a program alive while WebGPU work is pending.
+In slicc-kernel, `onnxruntime-node` is not needed: the `slicc` export condition picks `onnxruntime-web`. It needs slicc-jsh 0.31.0 or later: it keeps a program alive while WebGPU work is pending, and it has the `tls` module that `ws`, which serves `/v1/realtime`, loads.
 
 | Command | |
 | --- | --- |
