@@ -89,9 +89,9 @@ describe('realtime transcription through pi-audio', { skip }, () => {
     await server?.close();
   });
 
-  test('listen() streams a turn with server VAD in real time', async () => {
-    const pcm = pcm24(wav, { before: 0.6, after: 1.5 });
-    const marks = { speechEnd: 0.6 + 2.67 };
+  test('listen() streams a turn with server VAD in real time, ending on speech', async () => {
+    const pcm = pcm24(wav, { before: 0.6, endOnSpeech: true });
+    const marks = { speechEnd: pcm.length / 2 / 24000 - 0.04 };
     const stream = listen(model, chunks(pcm, { realtime: true, marks }), { apiKey: KEY });
     const seen = [];
     for await (const event of stream) {
@@ -102,18 +102,18 @@ describe('realtime transcription through pi-audio', { skip }, () => {
     assert.ok(types.includes('speech_start'), types.join());
     const final = seen.find((e) => e.type === 'final');
     assert.ok(final, JSON.stringify(seen.at(-1)));
-    assert.match(final.text.toLowerCase(), FOX);
+    assert.match(final.text.toLowerCase(), FOX, JSON.stringify(seen));
     const done = seen.find((e) => e.type === 'done');
     assert.match(done.transcript.text.toLowerCase(), FOX);
     const latency = Math.round(marks.final - marks.sentEnd);
-    console.log(`end of the clip to the final transcript: ${latency} ms`);
+    console.log(`end of speech to the final transcript: ${latency} ms`);
     const partials = seen.filter((e) => e.type === 'partial');
     if (partials.length > 0)
       assert.ok(final.text.toLowerCase().startsWith(partials[0].text.toLowerCase().split(' ')[0]));
   });
 
   test('listen() keeps up when audio arrives faster than real time', async () => {
-    const pcm = pcm24(wav, { before: 0.3, after: 1 });
+    const pcm = pcm24(wav, { before: 0.3, endOnSpeech: true });
     const result = await listen(model, chunks(pcm), { apiKey: KEY }).result();
     assert.match(result.text.toLowerCase(), FOX);
     const { models } = await (
@@ -167,6 +167,39 @@ describe('realtime transcription through pi-audio', { skip }, () => {
     assert.equal((await s.next('error')).error.code, 'invalid_event');
     s.ws.send('{nope');
     assert.equal((await s.next('error')).error.code, 'invalid_json');
+    s.ws.close();
+  });
+
+  test('a second utterance still in progress when the audio stops is completed', async () => {
+    const url = `${server.url.replace('http', 'ws')}/v1/realtime?intent=transcription`;
+    const s = socket(url, ['realtime', `openai-insecure-api-key.${KEY}`]);
+    await s.opened;
+    s.send({
+      type: 'session.update',
+      session: {
+        type: 'transcription',
+        audio: {
+          input: {
+            transcription: { model: WHISPER, language: 'en' },
+            turn_detection: { type: 'server_vad' },
+          },
+        },
+      },
+    });
+    await s.next('session.updated');
+    const first = pcm24(wav, { before: 0.3, after: 1 });
+    const second = pcm24(wav, { endOnSpeech: true });
+    for (const part of [first, second])
+      for (let at = 0; at < part.length; at += 9600)
+        s.send({
+          type: 'input_audio_buffer.append',
+          audio: Buffer.from(part.subarray(at, at + 9600)).toString('base64'),
+        });
+    const one = await s.next('conversation.item.input_audio_transcription.completed');
+    const two = await s.next('conversation.item.input_audio_transcription.completed');
+    assert.notEqual(one.item_id, two.item_id);
+    assert.match(one.transcript.toLowerCase(), FOX);
+    assert.match(two.transcript.toLowerCase(), FOX);
     s.ws.close();
   });
 

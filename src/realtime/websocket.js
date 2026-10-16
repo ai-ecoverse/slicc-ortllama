@@ -4,6 +4,9 @@ import { EventEmitter } from 'node:events';
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const OPEN = 1;
 const CLOSED = 3;
+const MAX_FRAGMENTS = 1024;
+const DATA = new Set([0x0, 0x1, 0x2]);
+const CONTROL = new Set([0x8, 0x9, 0xa]);
 
 export function acceptKey(key) {
   return createHash('sha1').update(`${key}${GUID}`).digest('base64');
@@ -26,11 +29,13 @@ export function frame(opcode, payload) {
 }
 
 export class WebSocketConnection extends EventEmitter {
-  constructor(socket, { protocol = '', maxPayload = 16 * 1024 * 1024 } = {}) {
+  constructor(socket, { protocol = '', maxPayload = 16 * 1024 * 1024, idleMs = 60_000 } = {}) {
     super();
     this.socket = socket;
     this.protocol = protocol;
     this.maxPayload = maxPayload;
+    this.idleMs = idleMs;
+    this.timer = null;
     this.readyState = OPEN;
     this.buffer = Buffer.alloc(0);
     this.parts = [];
@@ -39,9 +44,17 @@ export class WebSocketConnection extends EventEmitter {
     socket.on('data', (chunk) => this.receive(chunk));
     socket.on('close', () => this.closed());
     socket.on('error', () => this.closed());
+    this.touch();
+  }
+
+  touch() {
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.close(1000, 'idle'), this.idleMs);
+    this.timer.unref?.();
   }
 
   receive(chunk) {
+    this.touch();
     this.buffer = Buffer.concat([this.buffer, chunk]);
     while (this.readyState === OPEN) {
       const parsed = this.parse();
@@ -68,6 +81,15 @@ export class WebSocketConnection extends EventEmitter {
       at = 10;
     }
     if (!masked) return { error: 1002, reason: 'client frames must be masked' };
+    if (!DATA.has(opcode) && !CONTROL.has(opcode)) return { error: 1002, reason: 'unknown opcode' };
+    if (CONTROL.has(opcode) && (!fin || length > 125))
+      return { error: 1002, reason: 'control frames must be whole and at most 125 bytes' };
+    if (opcode === 0 && this.parts.length === 0)
+      return { error: 1002, reason: 'continuation without a message' };
+    if ((opcode === 1 || opcode === 2) && this.parts.length > 0)
+      return { error: 1002, reason: 'new message before the last one ended' };
+    if (DATA.has(opcode) && this.parts.length >= MAX_FRAGMENTS)
+      return { error: 1009, reason: 'too many fragments' };
     if (length + this.partsLength > this.maxPayload)
       return { error: 1009, reason: 'message too big' };
     if (b.length < at + 4 + length) return null;
@@ -84,7 +106,10 @@ export class WebSocketConnection extends EventEmitter {
       return;
     }
     if (opcode === 0x8) {
-      this.close(payload.length >= 2 ? payload.readUInt16BE(0) : 1000);
+      const code = payload.length >= 2 ? payload.readUInt16BE(0) : 1000;
+      this.close(
+        code >= 1000 && code < 5000 && ![1004, 1005, 1006, 1015].includes(code) ? code : 1002
+      );
       return;
     }
     if (opcode === 0x9) {
@@ -113,6 +138,7 @@ export class WebSocketConnection extends EventEmitter {
 
   close(code = 1000, reason = '') {
     if (this.readyState !== OPEN) return;
+    clearTimeout(this.timer);
     const payload = Buffer.alloc(2 + Buffer.byteLength(reason));
     payload.writeUInt16BE(code, 0);
     payload.write(reason, 2);
@@ -127,13 +153,14 @@ export class WebSocketConnection extends EventEmitter {
   }
 
   closed() {
+    clearTimeout(this.timer);
     if (this.readyState === CLOSED) return;
     this.readyState = CLOSED;
     this.emit('close');
   }
 }
 
-export function upgrade(req, socket, head, { protocols = [], maxPayload } = {}) {
+export function upgrade(req, socket, head, { protocols = [], maxPayload, idleMs } = {}) {
   const key = req.headers['sec-websocket-key'];
   const valid =
     req.method === 'GET' &&
@@ -148,7 +175,7 @@ export function upgrade(req, socket, head, { protocols = [], maxPayload } = {}) 
   socket.write(
     `HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: ${acceptKey(key)}\r\n${protocol ? `sec-websocket-protocol: ${protocol}\r\n` : ''}\r\n`
   );
-  const ws = new WebSocketConnection(socket, { protocol, maxPayload });
+  const ws = new WebSocketConnection(socket, { protocol, maxPayload, idleMs });
   if (head?.length) queueMicrotask(() => ws.receive(head));
   return ws;
 }

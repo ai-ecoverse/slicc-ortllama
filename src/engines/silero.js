@@ -16,6 +16,12 @@ async function isSilero(files, rel) {
 
 export function createSileroVad(ort, session) {
   const sr = new ort.Tensor('int64', BigInt64Array.from([BigInt(RATE)]), []);
+  let queue = Promise.resolve();
+  const run = (feeds) => {
+    const result = queue.then(() => session.run(feeds));
+    queue = result.catch(() => {});
+    return result;
+  };
   return {
     frame: FRAME,
     rate: RATE,
@@ -27,7 +33,7 @@ export function createSileroVad(ort, session) {
         async probability(frame) {
           input.set(context);
           input.set(frame, CONTEXT);
-          const out = await session.run({
+          const out = await run({
             input: new ort.Tensor('float32', input.slice(), [1, CONTEXT + FRAME]),
             state: new ort.Tensor('float32', state, [2, 1, 128]),
             sr,
@@ -69,7 +75,7 @@ export const silero = {
     const session = await backend.ort.InferenceSession.create(
       await files.read(modelFile(variant)),
       {
-        executionProviders: backend.executionProviders,
+        executionProviders: backend.fallbackProviders ?? backend.executionProviders,
         ...backend.sessionOptions,
       }
     );

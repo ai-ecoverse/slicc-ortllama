@@ -82,7 +82,7 @@ export async function startServer({
     port: bound,
     url: `http://${host.includes(':') ? `[${host}]` : host}:${bound}`,
     async close() {
-      realtime.close();
+      await realtime.close();
       await new Promise((resolve) => server.close(() => resolve()));
       await rt.close();
     },

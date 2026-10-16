@@ -50,39 +50,40 @@ function refuse(socket, error) {
 }
 
 export function attachRealtime(server, { catalog, runtime, ...options }) {
-  const clients = new Set();
+  const sessions = new Map();
   server.on('upgrade', (req, socket, head) => {
     const problem = checkUpgrade(req, options);
     if (problem) {
       refuse(socket, problem);
       return;
     }
-    const ws = upgrade(req, socket, head, { protocols: ['realtime'] });
+    const ws = upgrade(req, socket, head, { protocols: ['realtime'], idleMs: options.idleMs });
     if (!ws) {
       refuse(socket, new HttpError(400, 'the request is not a WebSocket upgrade'));
       return;
     }
-    clients.add(ws);
     const session = new RealtimeSession({
       catalog,
       runtime,
       send: (event) => ws.send(JSON.stringify(event)),
     });
+    sessions.set(ws, session);
     ws.on('message', (data, binary) => {
       if (binary)
         session.fail(new HttpError(400, 'events must be JSON text', { code: 'invalid_event' }));
       else session.receive(data);
     });
     ws.on('close', () => {
-      clients.delete(ws);
-      session.close().catch(() => {});
+      session.close().finally(() => sessions.delete(ws));
     });
     session.start();
   });
   return {
-    clients,
-    close() {
-      for (const client of clients) client.terminate();
+    sessions,
+    async close() {
+      const open = [...sessions];
+      await Promise.all(open.map(([, session]) => session.close()));
+      for (const [ws] of open) ws.terminate();
     },
   };
 }

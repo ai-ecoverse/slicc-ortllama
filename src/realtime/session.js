@@ -5,6 +5,12 @@ import { PRIORITY } from '../runtime.js';
 const RATE = 16000;
 const PARTIAL_SECONDS = 0.5;
 const MIN_COMMIT_SECONDS = 0.1;
+const MAX_TURN_SECONDS = 30;
+const LIMITS = {
+  threshold: [0.2, 0.95],
+  prefix_padding_ms: [0, 2000],
+  silence_duration_ms: [100, 10000],
+};
 
 export const DEFAULT_VAD = {
   type: 'server_vad',
@@ -43,19 +49,18 @@ function vadConfig(value) {
   const out = { ...DEFAULT_VAD };
   for (const key of ['threshold', 'prefix_padding_ms', 'silence_duration_ms']) {
     if (value[key] === undefined) continue;
-    if (typeof value[key] !== 'number' || !Number.isFinite(value[key]) || value[key] < 0)
-      throw invalid(
-        `${key} must be a non-negative number`,
-        `session.audio.input.turn_detection.${key}`
-      );
-    out[key] = value[key];
+    if (typeof value[key] !== 'number' || !Number.isFinite(value[key]))
+      throw invalid(`${key} must be a number`, `session.audio.input.turn_detection.${key}`);
+    const [low, high] = LIMITS[key];
+    out[key] = Math.min(high, Math.max(low, value[key]));
   }
   return out;
 }
 
 class Turn {
-  constructor(id, previous, start) {
+  constructor(id, previous, start, generation) {
     this.id = id;
+    this.generation = generation;
     this.previous = previous;
     this.start = start;
     this.emitted = [];
@@ -78,14 +83,17 @@ export class RealtimeSession {
       prompt: null,
       turnDetection: { ...DEFAULT_VAD },
     };
-    this.controller = new AbortController();
     this.inbox = Promise.resolve();
     this.decodes = Promise.resolve();
     this.partial = null;
     this.whisper = null;
     this.held = null;
+    this.vadHeld = null;
     this.vad = null;
     this.stream = null;
+    this.generation = 0;
+    this.idle = null;
+    this.closing = null;
     this.resampler = createResampler(this.config.rate, RATE);
     this.received = 0;
     this.reset();
@@ -133,6 +141,8 @@ export class RealtimeSession {
   }
 
   receive(text) {
+    this.arrived = performance.now();
+    this.arm();
     this.inbox = this.inbox.then(() => this.dispatch(text));
     return this.inbox;
   }
@@ -199,7 +209,7 @@ export class RealtimeSession {
         'session.audio.input.transcription.model'
       );
     if (this.held?.key !== resolved.key) {
-      const entry = await this.runtime.hold(resolved, this.controller.signal);
+      const entry = await this.runtime.hold(resolved);
       if (this.held) this.runtime.unhold(this.held);
       this.held = entry;
     }
@@ -208,18 +218,8 @@ export class RealtimeSession {
       const vad = await this.catalog.resolve(this.vadModel);
       if (vad.engine.capability !== 'vad')
         throw invalid(`model ${vad.id} is not a voice activity detector`);
-      const backend = await this.runtime.backend();
-      const instance = await vad.engine.load({
-        backend: {
-          ...backend,
-          executionProviders: backend.fallbackProviders,
-        },
-        files: vad.files,
-        variant: vad.variant,
-        info: vad.info,
-      });
-      if (this.closed) await instance.release?.();
-      else this.vad = instance;
+      this.vadHeld = await this.runtime.hold(vad);
+      this.vad = this.vadHeld.instance;
     }
     if (config.turnDetection && this.vad && !this.stream) this.stream = this.vad.stream();
     if (!config.turnDetection) this.stream = null;
@@ -232,7 +232,26 @@ export class RealtimeSession {
     const samples = this.resampler(decodePcm16(bytes, this.config.rate).samples);
     this.received += samples.length;
     this.push(samples);
-    if (this.config.turnDetection) await this.detect(samples);
+    if (!this.config.turnDetection) {
+      if (this.received - this.offset >= MAX_TURN_SECONDS * RATE) this.commit();
+      return;
+    }
+    await this.detect(samples);
+  }
+
+  arm() {
+    clearTimeout(this.idle);
+    if (!this.config.turnDetection || this.closing) return;
+    const quiet = this.config.turnDetection.silence_duration_ms;
+    this.idle = setTimeout(() => {
+      this.idle = setTimeout(() => {
+        if (performance.now() - this.arrived < quiet) return;
+        this.inbox = this.inbox.then(() => {
+          if (this.turn && !this.closed) this.finish(this.received);
+        });
+      }, 0);
+    }, quiet);
+    this.idle.unref?.();
   }
 
   push(samples) {
@@ -266,7 +285,7 @@ export class RealtimeSession {
           this.boundary,
           position - frame - Math.round((vad.prefix_padding_ms * RATE) / 1000)
         );
-        this.turn = new Turn(randomId('item'), this.previousItem, start);
+        this.turn = new Turn(randomId('item'), this.previousItem, start, this.generation);
         this.silence = 0;
         this.emit('input_audio_buffer.speech_started', {
           audio_start_ms: this.ms(start),
@@ -276,6 +295,7 @@ export class RealtimeSession {
         this.silence += frame;
         if ((this.silence * 1000) / RATE >= vad.silence_duration_ms) this.finish(position);
       } else if (this.turn) this.silence = 0;
+      if (this.turn && position - this.turn.start >= MAX_TURN_SECONDS * RATE) this.finish(position);
       if (this.turn && position - this.turn.decodedAt >= PARTIAL_SECONDS * RATE)
         this.refresh(position);
     }
@@ -298,21 +318,14 @@ export class RealtimeSession {
     return this.audio.slice(from, Math.max(from, Math.min(this.used, end - this.offset)));
   }
 
-  options(timestamps) {
-    return {
-      language: this.config.language,
-      prompt: this.config.prompt,
-      timestamps,
-      signal: this.controller.signal,
-    };
+  current(turn) {
+    return turn.generation === this.generation;
   }
 
   transcribe(audio, timestamps) {
-    return this.runtime.use(
-      this.whisper,
-      PRIORITY.realtime,
-      (model) => model.transcribe(audio, this.options(timestamps)),
-      this.controller.signal
+    const { language, prompt } = this.config;
+    return this.runtime.use(this.whisper, PRIORITY.realtime, (model) =>
+      model.transcribe(audio, { language, prompt, timestamps })
     );
   }
 
@@ -322,12 +335,13 @@ export class RealtimeSession {
     if (this.partial) return;
     const audio = this.slice(turn.start, position);
     this.partial = this.decodes
-      .then(() => (turn.done ? null : this.transcribe(audio, false)))
-      .then((result) => result && this.delta(turn, result.text))
-      .catch((error) => this.closed || this.fail(error))
+      .then(() => (turn.done || !this.current(turn) ? null : this.transcribe(audio, false)))
+      .then((result) => result && this.current(turn) && this.delta(turn, result.text))
+      .catch((error) => this.fail(error))
       .finally(() => {
         this.partial = null;
       });
+    this.decodes = this.partial;
   }
 
   delta(turn, text) {
@@ -365,14 +379,17 @@ export class RealtimeSession {
     });
     this.final(turn, this.slice(turn.start, position));
     this.silence = 0;
+    const cut = Math.min(this.used, position - this.offset);
+    this.audio.copyWithin(0, cut, this.used);
+    this.used -= cut;
+    this.offset += cut;
   }
 
   final(turn, audio) {
-    const waitFor = this.partial ?? Promise.resolve();
     this.decodes = this.decodes
-      .then(() => waitFor)
-      .then(() => this.transcribe(audio, true))
+      .then(() => (this.current(turn) ? this.transcribe(audio, true) : null))
       .then((result) => {
+        if (!result || !this.current(turn)) return;
         this.extend(turn, words(result.text));
         this.emit('conversation.item.input_audio_transcription.completed', {
           item_id: turn.id,
@@ -381,7 +398,7 @@ export class RealtimeSession {
           usage: { type: 'duration', seconds: Math.ceil(audio.length / RATE) },
         });
       })
-      .catch((error) => this.closed || this.fail(error));
+      .catch((error) => this.fail(error));
   }
 
   commit() {
@@ -389,16 +406,14 @@ export class RealtimeSession {
       this.finish(this.received);
       return;
     }
-    const audio = this.config.turnDetection
-      ? new Float32Array(0)
-      : this.slice(this.offset, this.received);
+    const audio = this.slice(this.offset, this.received);
     if (audio.length < MIN_COMMIT_SECONDS * RATE)
       throw invalid(
         'the input audio buffer has less than 100 ms of audio',
         null,
         'input_audio_buffer_commit_empty'
       );
-    const turn = new Turn(randomId('item'), this.previousItem, this.offset);
+    const turn = new Turn(randomId('item'), this.previousItem, this.offset, this.generation);
     turn.done = true;
     this.previousItem = turn.id;
     this.emit('input_audio_buffer.committed', {
@@ -407,25 +422,38 @@ export class RealtimeSession {
     });
     this.final(turn, audio);
     this.offset = this.received;
+    this.boundary = this.received;
     this.used = 0;
   }
 
   clear() {
     if (this.turn) this.turn.done = true;
+    this.generation++;
     this.reset();
     this.resampler = createResampler(this.config.rate, RATE);
     if (this.vad && this.config.turnDetection) this.stream = this.vad.stream();
     this.emit('input_audio_buffer.cleared');
   }
 
-  async close() {
+  close() {
+    this.closing ??= this.shutdown();
+    return this.closing;
+  }
+
+  async shutdown() {
+    await this.inbox;
+    clearTimeout(this.idle);
+    if (this.turn) this.finish(this.received);
+    for (let last = null; last !== this.decodes; ) {
+      last = this.decodes;
+      await last;
+    }
+    this.generation++;
     this.closed = true;
-    this.controller.abort();
-    await this.inbox.catch(() => {});
-    await this.decodes.catch(() => {});
     if (this.held) this.runtime.unhold(this.held);
+    if (this.vadHeld) this.runtime.unhold(this.vadHeld);
     this.held = null;
-    await this.vad?.release?.();
+    this.vadHeld = null;
     this.vad = null;
   }
 }

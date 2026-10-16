@@ -7,9 +7,14 @@ export async function foxWav() {
   return new Uint8Array(await readFile(new URL('fixtures/fox.wav', import.meta.url)));
 }
 
-export function pcm24(wav, { before = 0, after = 0 } = {}) {
+export function pcm24(wav, { before = 0, after = 0, endOnSpeech = false } = {}) {
   const { samples, rate } = decodeWav(wav);
-  const speech = resample(samples, rate, 24000);
+  let speech = resample(samples, rate, 24000);
+  if (endOnSpeech) {
+    let end = speech.length;
+    while (end > 0 && Math.abs(speech[end - 1]) < 0.02) end--;
+    speech = speech.subarray(0, end);
+  }
   const lead = Math.round(before * 24000);
   const out = new Float32Array(lead + speech.length + Math.round(after * 24000));
   out.set(speech, lead);
