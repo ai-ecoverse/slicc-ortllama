@@ -1,14 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import { after, before, describe, test } from 'node:test';
 import { transcribe } from '@ai-ecoverse/pi-audio';
 import { registerOpenAI } from '@ai-ecoverse/pi-audio/openai';
-import { decodeWav, resample } from '../../src/audio/pcm.js';
 import { openCatalog, startServer } from '../../src/index.js';
 import { transcriptionModel } from '../../src/pi-audio.js';
+import { FOX, foxWav, pcm24 } from './audio.mjs';
 
 const WHISPER = 'onnx-community/whisper-tiny';
-const FOX = /the quick brown fox jumps? over the lazy dog/;
 
 async function cached() {
   try {
@@ -25,17 +23,6 @@ const have = await cached();
 const skip =
   !have && !process.env.ORTLLAMA_REQUIRE_MODEL && `${WHISPER} is not in the Hugging Face cache`;
 
-function pcm24(wav) {
-  const { samples, rate } = decodeWav(wav);
-  const out = resample(samples, rate, 24000);
-  const bytes = new Uint8Array(out.length * 2);
-  const view = new DataView(bytes.buffer);
-  out.forEach((x, i) => {
-    view.setInt16(i * 2, Math.max(-32768, Math.min(32767, Math.round(x * 32768))), true);
-  });
-  return bytes;
-}
-
 describe('Whisper transcription through pi-audio', { skip }, () => {
   let server;
   let wav;
@@ -43,7 +30,7 @@ describe('Whisper transcription through pi-audio', { skip }, () => {
   let unregister;
 
   before(async () => {
-    wav = new Uint8Array(await readFile(new URL('fixtures/fox.wav', import.meta.url)));
+    wav = await foxWav();
     server = await startServer({ env: { ...process.env, ORTLLAMA_API_KEY: '' }, port: 0 });
     unregister = registerOpenAI();
     model = transcriptionModel({ id: WHISPER, baseUrl: `${server.url}/v1` });

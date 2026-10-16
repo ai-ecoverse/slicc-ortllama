@@ -20,3 +20,18 @@ export function transcriptionModel({ id = 'transcribe', name, baseUrl = DEFAULT_
     audioCost: { perInputMinute: 0 },
   };
 }
+
+export function realtimeTranscriptionModel({
+  id = 'realtime-transcribe',
+  name,
+  baseUrl = DEFAULT_BASE_URL,
+} = {}) {
+  return {
+    ...base(id, name, baseUrl, 'openai-realtime-transcription'),
+    type: 'transcription',
+    streaming: true,
+    turnDetection: 'vad',
+    inputFormats: [pcm24],
+    audioCost: { perInputMinute: 0 },
+  };
+}

@@ -81,7 +81,7 @@ export async function readJson(req, limit = MAX_BODY) {
   }
 }
 
-function authorized(req, apiKey) {
+export function authorized(req, apiKey) {
   if (!apiKey) return true;
   const header = req.headers.authorization ?? '';
   return header === `Bearer ${apiKey}`;

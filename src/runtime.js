@@ -79,6 +79,26 @@ export class Runtime {
     );
   }
 
+  hold(resolved, signal) {
+    return this.run(
+      PRIORITY.realtime,
+      async () => {
+        const entry = await this.acquire(resolved);
+        entry.pins++;
+        this.timers.clearTimeout(entry.timer);
+        entry.timer = null;
+        entry.expiresAt = null;
+        return entry;
+      },
+      signal
+    );
+  }
+
+  unhold(entry) {
+    entry.pins = Math.max(0, entry.pins - 1);
+    if (entry.pins === 0 && this.loaded.get(entry.key) === entry) this.touch(entry);
+  }
+
   async acquire(resolved) {
     const existing = this.loaded.get(resolved.key);
     if (existing) {
@@ -122,6 +142,7 @@ export class Runtime {
       timer: null,
       expiresAt: null,
       generation: 0,
+      pins: 0,
     };
     this.loaded.set(resolved.key, entry);
     return entry;
@@ -133,7 +154,7 @@ export class Runtime {
     entry.timer = null;
     entry.expiresAt = null;
     const generation = ++entry.generation;
-    if (!Number.isFinite(this.keepAliveMs)) return;
+    if (entry.pins > 0 || !Number.isFinite(this.keepAliveMs)) return;
     entry.expiresAt = entry.lastUsed + this.keepAliveMs;
     entry.timer = this.timers.setTimeout(() => {
       this.run(PRIORITY.expire, () => this.expire(entry, generation)).catch(() => {});
@@ -142,12 +163,15 @@ export class Runtime {
   }
 
   async expire(entry, generation) {
-    if (this.loaded.get(entry.key) !== entry || entry.generation !== generation) return false;
+    if (this.loaded.get(entry.key) !== entry || entry.generation !== generation || entry.pins > 0)
+      return false;
     return this.unload(entry.key);
   }
 
   async evict(keep) {
-    const byAge = [...this.loaded.values()].sort((a, b) => a.lastUsed - b.lastUsed);
+    const byAge = [...this.loaded.values()]
+      .filter((entry) => entry.pins === 0)
+      .sort((a, b) => a.lastUsed - b.lastUsed);
     while (byAge.length > Math.max(0, keep)) await this.unload(byAge.shift().key);
   }
 
@@ -162,7 +186,7 @@ export class Runtime {
 
   ps() {
     return [...this.loaded.values()].map(
-      ({ id, variant, engine, executionProviders, loadMs, lastUsed, expiresAt }) => ({
+      ({ id, variant, engine, executionProviders, loadMs, lastUsed, expiresAt, pins }) => ({
         id,
         variant,
         engine,
@@ -170,6 +194,7 @@ export class Runtime {
         loadMs,
         lastUsed: new Date(lastUsed).toISOString(),
         expiresAt: expiresAt === null ? null : new Date(expiresAt).toISOString(),
+        sessions: pins,
       })
     );
   }
