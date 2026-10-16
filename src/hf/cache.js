@@ -57,13 +57,13 @@ export function formatModelId({ repo, subfolder = '', revision = null, variant =
   return `${repo}${subfolder ? `/${subfolder}` : ''}${revision ? `@${revision}` : ''}${variant ? `:${variant}` : ''}`;
 }
 
-export function repoDir(cache, repo) {
-  return join(cache, `models--${repo.replace('/', '--')}`);
+export function repoDir(cache, repo, type = 'model') {
+  return join(cache, `${type}s--${repo.replace('/', '--')}`);
 }
 
-export async function resolveRevision(cache, repo, revision = 'main') {
+export async function resolveRevision(cache, repo, revision = 'main', type = 'model') {
   if (!validRevision(revision)) return null;
-  const dir = repoDir(cache, repo);
+  const dir = repoDir(cache, repo, type);
   const sha = SHA.test(revision)
     ? revision
     : (await readRef(join(dir, 'refs', ...revision.split('/')))).trim();

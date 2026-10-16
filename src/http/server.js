@@ -1,3 +1,4 @@
+import { once } from 'node:events';
 import { createServer as createHttpServer } from 'node:http';
 import { errorBody, HttpError } from './errors.js';
 
@@ -81,6 +82,40 @@ export async function readJson(req, limit = MAX_BODY) {
   }
 }
 
+function abortion(signal) {
+  const aborted = new Promise((_, reject) => {
+    if (signal.aborted) reject(signal.reason);
+    else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+  });
+  aborted.catch(() => {});
+  return aborted;
+}
+
+async function pipe(res, result, cors, signal) {
+  const chunks = result.stream[Symbol.asyncIterator]();
+  const aborted = abortion(signal);
+  const next = () => Promise.race([chunks.next(), aborted]);
+  const stop = () => Promise.resolve(chunks.return?.()).catch(() => {});
+  let step;
+  try {
+    step = await next();
+  } catch (error) {
+    void stop();
+    throw error;
+  }
+  res.writeHead(result.status ?? 200, { ...cors, ...result.headers });
+  try {
+    while (!step.done) {
+      if (!res.write(step.value)) await Promise.race([once(res, 'drain'), aborted]);
+      step = await next();
+    }
+    res.end();
+  } catch (error) {
+    void stop();
+    res.destroy(signal.aborted ? undefined : error);
+  }
+}
+
 export function authorized(req, apiKey) {
   if (!apiKey) return true;
   const header = req.headers.authorization ?? '';
@@ -102,6 +137,12 @@ async function sendEvents(res, events, headers) {
   } catch (error) {
     res.end(`data: ${JSON.stringify(errorBody(error).body)}\n\n`);
   }
+}
+
+function respond(res, result, { cors, send, signal }) {
+  if (result?.events) return sendEvents(res, result.events, cors);
+  if (result?.stream) return pipe(res, result, cors, signal);
+  send(result?.status ?? 200, result?.body ?? result);
 }
 
 export function createHandler(routes, options = {}) {
@@ -145,8 +186,7 @@ export function createHandler(routes, options = {}) {
       const read = route.raw ? readBody : readJson;
       const body = req.method === 'POST' ? await read(req, options.maxBody) : undefined;
       const result = await route.handle({ req, url, body, signal: controller.signal });
-      if (result?.events) return await sendEvents(res, result.events, cors);
-      send(result?.status ?? 200, result?.body ?? result);
+      await respond(res, result, { cors, send, signal: controller.signal });
     } catch (error) {
       if (controller.signal.aborted) return;
       const { status, body } = errorBody(error);

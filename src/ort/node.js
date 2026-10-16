@@ -45,6 +45,7 @@ export async function loadBackend({
   return {
     ort: withHalfInputs(ort),
     track: 'node',
+    env,
     executionProviders: providersFrom(env, defaultProviders(platform, arch)),
     fallbackProviders: ['cpu'],
     sessionOptions: { preferredOutputLocation: 'cpu' },

@@ -18,6 +18,7 @@ export async function loadBackend({
   return {
     ort,
     track: 'web',
+    env,
     executionProviders: providersFrom(env, gpu ? ['webgpu', 'wasm'] : ['wasm']),
     fallbackProviders: ['wasm'],
     sessionOptions: {},
