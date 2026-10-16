@@ -1,6 +1,7 @@
 import { systemone } from './systemone.js';
+import { whisper } from './whisper.js';
 
-export const ENGINES = [systemone];
+export const ENGINES = [systemone, whisper];
 
 export async function detectEngine(files, engines = ENGINES) {
   for (const engine of engines) {

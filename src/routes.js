@@ -1,5 +1,6 @@
 import { badRequest } from './http/errors.js';
 import { PRIORITY } from './runtime.js';
+import { transcriptionRoutes } from './transcription.js';
 
 function modelEntry(m, aliasOf = null) {
   return {
@@ -52,5 +53,6 @@ export function createRoutes({ catalog, runtime, version }) {
         return { ...result, model: model ?? 'decisions' };
       },
     },
+    ...transcriptionRoutes({ catalog, runtime }),
   };
 }

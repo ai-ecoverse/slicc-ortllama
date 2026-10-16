@@ -40,7 +40,7 @@ function corsHeaders(req, options) {
   };
 }
 
-export function readJson(req, limit = MAX_BODY) {
+export function readBody(req, limit = MAX_BODY) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
@@ -54,20 +54,23 @@ export function readJson(req, limit = MAX_BODY) {
       chunks.push(chunk);
     });
     req.on('end', () => {
-      if (size > limit) return;
-      const text = Buffer.concat(chunks).toString('utf8');
-      if (text.trim() === '') return reject(new HttpError(400, 'request body must be JSON'));
-      try {
-        resolve(JSON.parse(text));
-      } catch {
-        reject(new HttpError(400, 'request body is not valid JSON'));
-      }
+      if (size <= limit) resolve(Buffer.concat(chunks));
     });
     req.on('error', reject);
     req.on('close', () => {
       if (!req.complete) reject(new HttpError(400, 'the request body was cut off'));
     });
   });
+}
+
+export async function readJson(req, limit = MAX_BODY) {
+  const text = (await readBody(req, limit)).toString('utf8');
+  if (text.trim() === '') throw new HttpError(400, 'request body must be JSON');
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new HttpError(400, 'request body is not valid JSON');
+  }
 }
 
 function authorized(req, apiKey) {
@@ -114,7 +117,8 @@ export function createHandler(routes, options = {}) {
         });
       if (!route.public && !authorized(req, options.apiKey))
         throw new HttpError(401, 'missing or wrong API key', { code: 'invalid_api_key' });
-      const body = req.method === 'POST' ? await readJson(req, options.maxBody) : undefined;
+      const read = route.raw ? readBody : readJson;
+      const body = req.method === 'POST' ? await read(req, options.maxBody) : undefined;
       const result = await route.handle({ req, url, body, signal: controller.signal });
       send(result?.status ?? 200, result?.body ?? result);
     } catch (error) {
