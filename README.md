@@ -112,7 +112,7 @@ Every bundle's weights are read into memory before the session is built, so load
 
 ### Transcription
 
-`POST /v1/audio/transcriptions` takes a multipart `file`, `model`, `language`, `prompt` and `response_format` (`json`, `verbose_json`, `text`, `srt`, `vtt`). Audio is WAV, mp3, FLAC, Ogg or WebM Opus, or 16-bit `audio/pcm` (`;rate=N`, default 24 kHz). The format comes from the file's first bytes, else its content type or file name, and is decoded the same way on both tracks: mp3 on [minimp3](https://github.com/lieff/minimp3) and Opus on libopus, both in WebAssembly, FLAC in JavaScript. Audio longer than 30 minutes, and other formats (AAC, M4A, MP4, Vorbis), answer `400`.
+`POST /v1/audio/transcriptions` takes a multipart `file`, `model`, `language`, `prompt` and `response_format` (`json`, `verbose_json`, `text`, `srt`, `vtt`). Audio is WAV, mp3, FLAC, Ogg or WebM Opus, or 16-bit `audio/pcm` (`;rate=N`, default 24 kHz). The format comes from the file's first bytes, else its content type or file name, and is decoded the same way on both tracks: mp3 on [minimp3](https://github.com/lieff/minimp3) and Opus on libopus, both in WebAssembly, FLAC in JavaScript. A leading ID3 tag is skipped before the format is read. Audio longer than 30 minutes, or more samples than 30 minutes at 48 kHz, FLAC above 192 kHz, a stream that changes its sample rate, and other formats (AAC, M4A, MP4, Vorbis), answer `400`.
 
 It answers `{ text, language, duration, segments, usage: { type: "duration", seconds } }`. Audio longer than 30 seconds is decoded in windows that follow Whisper's timestamps; the language is detected when the request names none.
 

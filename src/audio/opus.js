@@ -20,6 +20,18 @@ export function opusHead(bytes) {
   return head;
 }
 
+const FRAMES = [480, 960, 1920, 2880];
+
+export function packetSamples(packet) {
+  if (packet.length === 0) return 0;
+  const config = packet[0] >> 3;
+  const size =
+    config < 12 ? FRAMES[config % 4] : config < 16 ? FRAMES[config % 2] : 120 * 2 ** (config % 4);
+  const code = packet[0] & 3;
+  const count = code === 0 ? 1 : code < 3 ? 2 : (packet[1] ?? 0) & 0x3f;
+  return size * count;
+}
+
 export function opusRate(rate) {
   return RATES.find((r) => r >= rate) ?? 48000;
 }

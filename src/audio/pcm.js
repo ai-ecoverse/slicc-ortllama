@@ -116,6 +116,8 @@ export function decodePcm16(bytes, rate = 24000, channels = 1) {
   return { samples, rate };
 }
 
+const MAX_HALF = 64;
+
 function sinc(x) {
   if (x === 0) return 1;
   const y = Math.PI * x;
@@ -125,7 +127,7 @@ function sinc(x) {
 function filterOf(from, to, zeros) {
   const ratio = to / from;
   const cutoff = Math.min(1, ratio) * 0.97;
-  const half = Math.ceil(zeros / cutoff);
+  const half = Math.min(MAX_HALF, Math.ceil(zeros / cutoff));
   return {
     ratio,
     half,

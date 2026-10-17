@@ -7,6 +7,12 @@ const BITRATE = 64;
 
 let compiled;
 
+export function id3Size(bytes) {
+  if (bytes.length < 10 || bytes[0] !== 0x49 || bytes[1] !== 0x44 || bytes[2] !== 0x33) return 0;
+  const size = ((bytes[6] & 0x7f) << 21) | ((bytes[7] & 0x7f) << 14) | ((bytes[8] & 0x7f) << 7);
+  return 10 + (size | (bytes[9] & 0x7f)) + (bytes[5] & 0x10 ? 10 : 0);
+}
+
 export function isMp3(bytes) {
   if (bytes.length < 4) return false;
   if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return true;
