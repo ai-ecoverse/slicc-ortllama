@@ -9,7 +9,7 @@ import {
   repoDir,
   resolveRevision,
 } from './hf/cache.js';
-import { modelFiles } from './hf/files.js';
+import { glob, modelFiles } from './hf/files.js';
 import { badRequest, notFound } from './http/errors.js';
 
 const SAFE = /^[A-Za-z0-9._/:@=-]+$/;
@@ -220,10 +220,12 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
     const providers = hintedProviders(id, hints[id]);
     const { info, key } = await specialized(engine, files, found.info, hints[id], chosen);
     const missing = await engine.missing(files, info, chosen);
+    const patterns = engine.include(info, chosen);
+    const uncovered = missing.filter((rel) => !patterns.some((p) => glob(p).test(rel)));
     const download = repo
       ? downloadHint(repo, {
           revision: requestedRevision,
-          include: prefixed(subfolder, engine.include(info, chosen)),
+          include: prefixed(subfolder, [...patterns, ...uncovered]),
         })
       : null;
     if (missing.length > 0) {

@@ -273,6 +273,13 @@ export function includePatterns(info, variant) {
     ...meta,
     `${p.decoder.model}*`,
     ...(p.embed ? [`${p.embed.model}*`] : []),
-    ...(vision ? ['preprocessor_config.json', 'processor_config.json', `${vision.model}*`] : []),
+    ...(vision
+      ? [
+          'preprocessor_config.json',
+          'processor_config.json',
+          `${vision.model}*`,
+          ...(info.visionExtra ?? []),
+        ]
+      : []),
   ];
 }
