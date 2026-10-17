@@ -1,0 +1,41 @@
+{
+  "model": "onnx-community/whisper-large-v3-turbo",
+  "variant": "q4",
+  "revision": "360ebcde2559d60bb474678be3c1de9ef347d01a",
+  "executionProviders": ["cpu"],
+  "generator": "scripts/fixtures.mjs",
+  "fixtures": [
+    {
+      "name": "fox",
+      "file": "../audio/fox.wav",
+      "text": "The quick brown fox jumps over the lazy dog.",
+      "detect": "english",
+      "wer": 0,
+      "heard": "the quick brown fox jumps over the lazy dog."
+    },
+    {
+      "name": "lighthouse",
+      "file": "../audio/lighthouse.wav",
+      "text": "The old lighthouse stood at the edge of the cliff for more than a hundred years. Every night its keeper climbed the narrow stairs, trimmed the wick, and watched the beam sweep across the dark water. Ships passing in the fog relied on that steady light to find their way around the rocks. One winter a storm broke the windows and flooded the lower rooms, but the keeper kept the lamp burning until morning. When the sun rose, the fishermen in the village saw the tower still standing, and they carried bread and coffee up the hill to thank him. Years later the light was replaced by an automatic beacon.",
+      "detect": "english",
+      "wer": 0.018,
+      "heard": "The old lighthouse stood at the edge of the cliff for more than a hundred years. Every night its keeper climbed the narrow stairs, trimmed the wick, and watched the beams sweep across the dark water. Ships passing in the fog relied on that steady light to find their way around the rocks. One winter storm broke the windows and flooded the lower rooms, but the keeper kept the lamp burning until morning. When the sun rose, the fishermen in the village saw the tower still standing, and they carried bread and coffee up the hill. To thank him, years later the light was replaced by an automatic beacon."
+    },
+    {
+      "name": "french",
+      "file": "../audio/french.wav",
+      "text": "Bonjour à tous. Aujourd'hui il fait très beau à Paris, et nous allons nous promener le long de la Seine.",
+      "detect": "french",
+      "wer": 0,
+      "heard": "Bonjour à tous, aujourd'hui il fait très beau à Paris et nous allons nous promener le long de la Seine."
+    },
+    {
+      "name": "spanish",
+      "file": "../audio/spanish.wav",
+      "text": "Buenos días. Mañana vamos a viajar a Madrid en tren para visitar a nuestros amigos.",
+      "detect": "spanish",
+      "wer": 0,
+      "heard": "Buenos días. Mañana vamos a viajar a Madrid en tren para visitar a nuestros amigos."
+    }
+  ]
+}
