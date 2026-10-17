@@ -105,7 +105,7 @@ User messages may carry images as OpenAI `image_url` parts, which is what pi-ai 
 | Model | Download | Host CPU | Host WebGPU | Kernel WebGPU load |
 | --- | --- | --- | --- | --- |
 | `ai-ecoverse/kev.js/kev-0.8b` (default), `kev-0.8b-vision` | 0.84 GB, +0.2 GB | 0.8 s, 70 ms | 0.9 s, 75 ms (image 50 ms) | 1.9–2.4 s |
-| `ai-ecoverse/kev.js/kev-4b`, `kev-4b-vision` | 4.7 GB, +0.7 GB | 5.7 s, 0.5–1 s (image 0.35 s) | 2.4 s, 235 ms (image 155 ms) | 13–15 s |
+| `ai-ecoverse/kev.js/kev-4b`, `kev-4b-vision` | 4.7 GB, +0.7 GB | 5.7 s, 0.5–1 s (image 0.35 s) | 2.4 s, 235 ms (image 155 ms) | 13–23 s |
 | `ai-ecoverse/kev.js/kev-9b` | 8.9 GB | 7.8 s, 0.9–1.5 s | 4.4 s, 330 ms | 27 s |
 
 Loading a bundle takes about its size in memory. On a host, onnxruntime-node opens the graph by path and reads the weights itself: `kev-9b` peaks at 9.0 GB, `kev-4b` at 5.2 GB. In the kernel, onnxruntime-web asks for each weight's bytes while it builds the session, and ortllama reads them then, holding at most 1 GiB of weight files: for `kev-9b`, Chrome's page process peaks at 3.7 GiB and its GPU process at 8.1 GiB. jsh reads a whole file for each ranged read ([slicc-jsh#401](https://github.com/ai-ecoverse/slicc-jsh/issues/401)), so the larger bundles load about twice as slowly in the kernel as they would with every weight held at once. Both need kev.js 1.1 or later; with 1.0, every weight is read into memory first, and `kev-9b` peaks at about 20 GB.
