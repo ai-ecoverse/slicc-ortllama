@@ -3,6 +3,7 @@ import { badRequest, HttpError } from '../../http/errors.js';
 import { createPrefixCache } from './prefix.js';
 import { checkTools, DIRECT_ANSWER, DIRECT_TOOLS, escaper } from './profiles.js';
 import { createRng, pick } from './sample.js';
+import { createScore } from './score.js';
 import { createParser, stopFilter } from './stream.js';
 import { expandImages, requestImages, splicer } from './vision.js';
 
@@ -254,5 +255,7 @@ export function createChat({
     };
   }
 
-  return { chat, render, cache };
+  const score = createScore({ model, cache, eosIds, render, constraints, prefillAll, advance });
+
+  return { chat, render, cache, score, decode };
 }

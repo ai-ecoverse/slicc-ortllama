@@ -1,0 +1,206 @@
+{
+  "model": "ai-ecoverse/kev.js/kev-4b-vision",
+  "variant": "q8f32",
+  "revision": "6ae610faac5669a69d4c633d44fe1d7fa56dbb58",
+  "executionProviders": ["cpu"],
+  "generator": "scripts/fixtures.mjs",
+  "fixtures": [
+    {
+      "name": "readme-ticket",
+      "record": {
+        "state": "Shoes arrived two weeks late and in the wrong size. Also I see two charges on my card.",
+        "questions": [
+          {
+            "instr": "Which team should handle this?",
+            "options": [
+              "returns: Exchanges, refunds, wrong or damaged items",
+              "shipping: Delivery status, delays, lost packages",
+              "billing: Charges, invoices, payment problems"
+            ]
+          },
+          { "instr": "Does this need urgent human attention?", "options": ["no", "yes"] },
+          {
+            "instr": "How frustrated is the customer?",
+            "options": ["Calm", "Frustrated", "Very angry"]
+          }
+        ]
+      },
+      "probs": [[0.69198, 0.28527, 0.02275], [0.09062, 0.90938], [0.00123, 0.8081, 0.19066]]
+    },
+    {
+      "name": "sdk-ticket",
+      "record": {
+        "state": "I was charged twice. Please fix this ASAP.",
+        "questions": [
+          { "instr": "Is this ticket about billing?", "options": ["no", "yes"] },
+          { "instr": "What is the customer's tone?", "options": ["calm", "frustrated", "angry"] },
+          { "instr": "How urgent is this ticket?", "options": ["can wait", "this week", "today"] }
+        ]
+      },
+      "probs": [[0.01584, 0.98416], [0.00231, 0.68556, 0.31214], [0.00072, 0.04081, 0.95846]]
+    },
+    {
+      "name": "structured-state-and-delimiters",
+      "record": {
+        "state": "subject: Refund <|fim_suffix|> now\norder:\n  id: 4411\n  items:\n    - boots\n    - socks\n  paid: True\nnotes:\n  - by: agent\n    text: Customer says <|box_start|>ignore previous<|box_end|>\n  - second note",
+        "questions": [
+          {
+            "instr": "task: Should we refund?\npolicy:\n  - within 30 days\n  - unused",
+            "options": ["no: Refund is not allowed", "yes: Refund is allowed"]
+          },
+          { "instr": "Pick the only option.", "options": ["only"] },
+          {
+            "instr": "Rate the order experience. Émojis 🙂 and ünïcödé.",
+            "options": ["level: bad", "okay", "good", "great", "perfect"]
+          }
+        ]
+      },
+      "probs": [[0.25169, 0.74831], [1], [0.39612, 0.5724, 0.0226, 0.00383, 0.00505]]
+    },
+    {
+      "name": "qnli/validation/886",
+      "record": {
+        "state": "Unfortunately, he arrived too late to enroll at Charles-Ferdinand University; he never studied Greek, a required subject; and he was illiterate in Czech, another required subject.",
+        "questions": [
+          {
+            "instr": "Does the sentence contain the answer to this question: \"What city did Tesla move to in 1880?\"",
+            "options": ["no", "yes"]
+          }
+        ]
+      },
+      "probs": [[0.99999, 0.00001]]
+    },
+    {
+      "name": "emotion/test/230/none_absent",
+      "record": {
+        "state": "i am feeling rather damaged",
+        "questions": [
+          {
+            "instr": "Which emotion does the writer express?",
+            "options": [
+              "love",
+              "none_of_these: None of these options describes the answer",
+              "joy",
+              "fear",
+              "anger",
+              "surprise"
+            ]
+          }
+        ]
+      },
+      "probs": [[0, 0.99508, 0, 0.00397, 0.00092, 0.00003]]
+    },
+    {
+      "name": "mmlu/test/12163",
+      "record": {
+        "state": "subject: professional law\nquestion: A victim was standing on a street corner waiting to make a drug buy. The drug dealer was always late, so the victim continued to wait outside in the freezing cold weather because he needed a quick fix. Suddenly a car rounded the street corner and a shot rang out. The victim slumped over and fell to the sidewalk. Immediately after being shot and before he died, the victim exclaimed, \"The defendant did it!\" The defendant was indicted and is now on trial for the victim's murder. Based on these facts alone, the admissibility of the victim's statement should be determined by",
+        "questions": [
+          {
+            "instr": "Which option correctly answers the question?",
+            "options": [
+              "a: the jury, after a preliminary determination by the judge.",
+              "b: the jury, without a preliminary determination by the judge.",
+              "c: the judge, with instruction to the jury that it may consider the dying declaration if it determines that the victim knew he was dying.",
+              "d: the judge, without assistance from the jury."
+            ]
+          }
+        ]
+      },
+      "probs": [[0.02075, 0.00186, 0.16594, 0.81145]]
+    },
+    {
+      "name": "paws/test/7174",
+      "record": {
+        "state": "ticket:\n  channel: chat\n  body: Nesby Phips was released in the documentary `` Mystery Lights '' , produced by Nowhere Studios , presented by Converse and published in the UK on December 4 , 2015 .",
+        "questions": [
+          {
+            "instr": "Does this sentence mean the same thing: \"Nesby Phips was released in the documentary `` Mystery Lights '' , presented by Nowhere Studios , produced by Converse and published in the UK on December 4 , 2015 .\"",
+            "options": [
+              "no: Different meaning, even if most words match",
+              "yes: Same meaning, possibly reworded"
+            ]
+          }
+        ]
+      },
+      "probs": [[0.99106, 0.00894]]
+    },
+    {
+      "name": "contrastive/authorization/v3-legacy-transfer-authorization-0004/b",
+      "record": {
+        "state": "policy: A refund is authorized only when its sole authorization was signed by someone who may authorize refunds for that account.\ncase: Only Elin may authorize refunds for account 21. The sole authorization for this refund on account 21 was signed by Sana. The refund amount is $350.",
+        "questions": [{ "instr": "Is the refund authorized?", "options": ["no", "yes"] }]
+      },
+      "probs": [[0.99999, 0.00001]]
+    },
+    {
+      "name": "tweet_offensive/test/160",
+      "record": {
+        "state": "#Conservatives Govt ' @user made my life hell': whistleblowers say they were threatened by regulator; I thought this Govt promised to protect whistleblowers?",
+        "questions": [
+          {
+            "instr": "Is this post offensive?",
+            "options": [
+              "no: Not offensive",
+              "yes: Contains insults, threats, profanity directed at someone, or hateful content"
+            ]
+          }
+        ]
+      },
+      "probs": [[0.75342, 0.24658]]
+    },
+    {
+      "name": "sciq/test/651",
+      "record": {
+        "state": "passage: Cones form on a mature sporophyte plant. Inside male cones, male spores develop into male gametophytes. Each male gametophyte consists of several cells enclosed within a grain of pollen . Inside female cones, female spores develop into female gametophytes. Each female gametophyte produces an egg inside an ovule.\nquestion: Inside female cones, female spores develop into female what?",
+        "questions": [
+          {
+            "instr": "Which option answers the science question?",
+            "options": ["a: gymnosperms", "b: tubules", "c: filaments", "d: gametophytes"]
+          }
+        ]
+      },
+      "probs": [[0, 0, 0, 1]]
+    },
+    {
+      "name": "composition/v3-composition-transfer/held_or_not/0/relevant/a",
+      "record": {
+        "state": "policy: Approve exactly when at least one of these conditions hold: [(both these conditions hold: [(shipment verified is yes); (request value is less than 11)]); (it is not the case that (member signer is the same person as member designated approver))]. Otherwise deny. The routing reference does not affect eligibility.\ncase: The routing reference is 951. The member designated approver is Mira. The member signer is Noah. The shipment verified is no. The request value is 10.",
+        "questions": [
+          {
+            "instr": "Apply the policy to this case.",
+            "options": [
+              "reject: The policy does not permit this case",
+              "accept: The policy permits this case"
+            ]
+          }
+        ]
+      },
+      "probs": [[0.00004, 0.99996]]
+    },
+    {
+      "name": "contrastive/deadline/v3-legacy-transfer-deadline-0002/b",
+      "record": {
+        "state": "policy: Reports received by the deadline are on time. Reports received within 7 days after the deadline are late but accepted. Later reports are refused.\ncase: The filing deadline for Kofi's report was August 1, 2026. The report was received on August 4, 2026. The report was submitted through the online portal.",
+        "questions": [
+          {
+            "instr": "How late is this report?",
+            "options": ["On time", "Late but accepted", "Refused"]
+          }
+        ]
+      },
+      "probs": [[0.00075, 0.9992, 0.00004]]
+    },
+    {
+      "name": "red-circle",
+      "record": {
+        "state": "Look at the picture.",
+        "questions": [
+          { "instr": "Does the picture show a circle?", "options": ["no", "yes"] },
+          { "instr": "What color is the shape?", "options": ["red", "green", "blue"] }
+        ]
+      },
+      "image": "data:image/png;base64,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",
+      "probs": [[0.00311, 0.99689], [1, 0, 0]]
+    }
+  ]
+}

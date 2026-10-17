@@ -57,7 +57,7 @@ curl -s localhost:11435/v1/audio/transcriptions -F file=@clip.wav -F response_fo
 | `ortllama ls [--json]` | models in the Hugging Face cache that ortllama can run |
 | `ortllama ps [--json]` | models the running server has loaded |
 | `ortllama alias [role [model]] [--unset role]` | show or set [role aliases](#roles) |
-| `ortllama check <model> [--fixtures file] [--json]` | load a model on this device, time a request, and compare with reference fixtures |
+| `ortllama check <model> [--fixtures file] [--json]` | load a model on this device, time a request, and compare it with [reference fixtures](#check): the ones shipped for the model, or `--fixtures file` |
 
 ## APIs
 
@@ -69,7 +69,7 @@ curl -s localhost:11435/v1/audio/transcriptions -F file=@clip.wav -F response_fo
 | `POST /v1/audio/transcriptions` | OpenAI's [transcription](#transcription) API, on Whisper |
 | `GET /v1/realtime?intent=transcription` | OpenAI's [realtime transcription](#realtime-transcription) over WebSocket |
 | `POST /v1/audio/speech` | OpenAI's [text to speech](#speech), on Kokoro-82M |
-| `GET /ortllama/ps` | loaded models |
+| `GET /ortllama/ps` | loaded models, their [execution providers](#execution-providers) and size, and the process's memory |
 
 Errors use OpenAI's envelope, `{ "error": { "message", "type", "param", "code" } }`.
 
@@ -100,11 +100,19 @@ User messages may carry images as OpenAI `image_url` parts, which is what pi-ai 
 
 ### System One
 
-`POST /v1/systemone` speaks TypeSafe's System One protocol on [kev.js](https://github.com/ai-ecoverse/kev.js). Requests to a kev.js vision bundle (such as `ai-ecoverse/kev.js/kev-0.8b-vision`) take an `image` field, a `data:` URL string or `{ "url": … }`, decoded to RGBA for kev.js; text-only bundles answer it with `400`. pi-ai's System One client does not send images yet.
+`POST /v1/systemone` speaks TypeSafe's System One protocol on [kev.js](https://github.com/ai-ecoverse/kev.js). Requests to a kev.js vision bundle (such as `ai-ecoverse/kev.js/kev-0.8b-vision`) take an `image` field, a `data:` URL string or `{ "url": … }`, decoded to RGBA for kev.js; text-only bundles answer it with `400`. pi-ai's System One client does not send images yet. Bundles known to work, with the load time and a warm three-question request (an image request for vision bundles) on an M4 Max:
+
+| Model | Download | Host CPU | Host WebGPU | Kernel WebGPU load |
+| --- | --- | --- | --- | --- |
+| `ai-ecoverse/kev.js/kev-0.8b` (default), `kev-0.8b-vision` | 0.84 GB, +0.2 GB | 0.8 s, 70 ms | 0.9 s, 75 ms (image 50 ms) | 1.3–1.6 s |
+| `ai-ecoverse/kev.js/kev-4b`, `kev-4b-vision` | 4.7 GB, +0.7 GB | 5.7 s, 0.5–1 s (image 0.35 s) | 2.4 s, 235 ms (image 155 ms) | 6.8–8.3 s |
+| `ai-ecoverse/kev.js/kev-9b` | 8.9 GB | 7.8 s, 0.9–1.5 s | 4.4 s, 330 ms | 9.8 s |
+
+Every bundle's weights are read into memory before the session is built, so loading `kev-9b` on a host takes about 20 GB, and the kernel needs a browser that grants that much.
 
 ### Transcription
 
-`POST /v1/audio/transcriptions` takes a multipart `file`, `model`, `language`, `prompt` and `response_format` (`json`, `verbose_json`, `text`, `srt`, `vtt`). Audio is WAV or 16-bit `audio/pcm` (`;rate=N`, default 24 kHz); other formats answer `400` for now.
+`POST /v1/audio/transcriptions` takes a multipart `file`, `model`, `language`, `prompt` and `response_format` (`json`, `verbose_json`, `text`, `srt`, `vtt`). Audio is WAV, mp3, FLAC, Ogg or WebM Opus, or 16-bit `audio/pcm` (`;rate=N`, default 24 kHz). The format comes from the file's first bytes, else its content type or file name, and is decoded the same way on both tracks: mp3 on [minimp3](https://github.com/lieff/minimp3) and Opus on libopus, both in WebAssembly, FLAC in JavaScript. Audio longer than 30 minutes, and other formats (AAC, M4A, MP4, Vorbis), answer `400`.
 
 It answers `{ text, language, duration, segments, usage: { type: "duration", seconds } }`. Audio longer than 30 seconds is decoded in windows that follow Whisper's timestamps; the language is detected when the request names none.
 
@@ -129,7 +137,7 @@ Audio is `audio/pcm` at 8–48 kHz (24 kHz by default). Turns are detected by `s
 `POST /v1/audio/speech` takes `{ model, input, voice, response_format, speed, instructions }`, on [Kokoro-82M](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX).
 
 - `model` defaults to the `speech` role, `voice` to `af_heart`, and `instructions` is accepted and ignored.
-- `response_format` is `wav` (the default) or `pcm`, 24 kHz mono 16-bit little-endian; other formats answer `400`.
+- `response_format` is `wav` (the default), `pcm` (24 kHz mono 16-bit little-endian), `mp3` (`audio/mpeg`, 64 kbit/s), `opus` (Ogg Opus, `audio/opus`, 32 kbit/s) or `flac` (`audio/flac`); `aac` answers `400`. mp3 is encoded by `@breezystack/lamejs` (LGPL-3.0), which ortllama does not ship and finds like a phonemizer (`npm install @breezystack/lamejs`); without it, `mp3` answers `501`.
 - `input` takes up to 4096 characters. It is split into sentences, long ones at clause marks or spaces, and each piece's audio is sent as soon as it is ready.
 
 ```sh
@@ -210,7 +218,15 @@ hf download onnx-community/silero-vad --include onnx/model.onnx
 Engines are picked by the files a model has, not by its name. Each engine in `src/engines/` gets ONNX Runtime from the caller and provides `detect`, `missing`, `include`, `load`, `checkOverrides` and `check`.
 
 - **Decoder.** Runs the transformers.js layout (`onnx/decoder_model_merged*.onnx` with `embed_tokens*.onnx`, or `onnx/model*.onnx`; variants are its quantizations, such as `q4f16`) and the onnxruntime-genai layout (`genai_config.json`, one variant per folder), with the model's own chat template and, when the export has one, its `vision_encoder*.onnx`. A small profile per family, chosen from the template, parses tool calls and reasoning; Mistral's `[TOOL_CALLS]name[ARGS]{…}` and `[THINK]…[/THINK]` are built in, and control-token names in client text are escaped so they cannot inject one.
-- **Whisper.** Runs the transformers.js ONNX exports (`config.json` with `model_type: "whisper"`, `onnx/encoder_model*.onnx` and `onnx/decoder_model_merged*.onnx`, external `.onnx_data` included). Variants follow the file suffixes: `fp32`, `fp16`, `q8` (`_quantized`), `int8`, `uint8`, `q4`, `q4f16`, `bnb4`; the default is the first complete one in that order.
+- **Whisper.** Runs the transformers.js ONNX exports (`config.json` with `model_type: "whisper"`, `onnx/encoder_model*.onnx` and `onnx/decoder_model_merged*.onnx`, external `.onnx_data` included). Variants follow the file suffixes: `fp32`, `fp16`, `q8` (`_quantized`), `int8`, `uint8`, `q4`, `q4f16`, `bnb4`; the default is the first complete one in that order. Mel bins, special tokens, languages and the timestamp grid come from the model's configs and tokenizer, so large-v3 models (128 mel bins, the extra `yue` token) work as well. Models known to work, with the mean word error rate on the `check` clips and real-time factors for a 2.7-second and a long clip (44 s on the host, 32 s in the kernel) on an M4 Max:
+
+| Model | Download | WER | Host CPU | Host WebGPU | Kernel WebGPU |
+| --- | --- | --- | --- | --- | --- |
+| `onnx-community/whisper-tiny` (default) | 151 MB | 0.092 | 0.06 / 0.013 | 0.13 / 0.077 | 0.09 / 0.061 |
+| `onnx-community/whisper-base` | 291 MB | 0.046 | 0.09 / 0.020 | 0.11 / 0.096 | 0.13 / 0.096 |
+| `onnx-community/whisper-large-v3-turbo:q4` | 759 MB | 0.005 | 1.3 / 0.20 | 0.27 / 0.070 | 0.31 / 0.118 |
+
+`whisper-tiny` stays the default: it is the smallest, and the fastest on the host CPU, which is where Whisper runs best on host Node. `whisper-large-v3-turbo` makes almost no mistakes, in French and Spanish too, but wants WebGPU, where its 32-layer encoder runs five times faster than on the CPU, so it loads on the host's default order rather than Whisper's `cpu`; fetch it with `hf download onnx-community/whisper-large-v3-turbo --include '*.json' onnx/encoder_model_q4.onnx onnx/decoder_model_merged_q4.onnx`. `whisper-base` sits in between. In a realtime session the final transcript follows the end of speech after 0.2 s with `whisper-tiny` on the CPU, 0.4 s with `whisper-base` on WebGPU, and 1 s with `whisper-large-v3-turbo` on WebGPU (5 s on the CPU).
 
 ### Model libraries
 
@@ -221,6 +237,40 @@ Model-specific libraries are never installed with ortllama. They are devDependen
 3. in pnpm's global installs (`$PNPM_HOME/global/…`, including slicc-kernel's `/usr/local/share/pnpm`).
 
 A model whose library is missing is still listed, and requests for it answer `501` with code `engine_unavailable` and the package to install.
+
+### Check
+
+`ortllama check` tells whether a model computes on this device what it computes on the reference, a host CPU. ortllama ships fixtures in `fixtures/` for every default model and the other models below that work; `check` picks them by model ID, so `ortllama check chat` compares the Instruct model. A fixture file is `{ "fixtures": [...] }`; audio may be inline base64 (`audio`) or a WAV path relative to the file (`file`). Each engine compares what stays stable across execution providers:
+
+| Engine | Fixtures | Passes when |
+| --- | --- | --- |
+| decoder | 3 prompts, the reference's greedy tokens with their log-probabilities and the margin to the runner-up | the tokens, fed back one by one, keep a mean log-probability within 0.15 nats, and no step with a margin over 1 nat picks another token |
+| systemone | 12 System One requests (plus an image for vision bundles) with their raw decision probabilities | mean change ≤ 0.02, at most 0.25, and no clear answer flips |
+| whisper | 4 clips: `fox.wav`, a 32-second English story, French and Spanish (Kokoro voices, 8 kHz 8-bit) | the language is detected and the word error rate stays within 0.1 of the reference's |
+| kokoro | 3 sentences as token IDs, so the phonemizer does not matter, with a 40-band log-mel summary | the mel spectrogram stays within 2 dB and the length within 5 %; phonemes are compared and reported |
+| silero | speech probabilities for every 32 ms frame of two clips | mean change ≤ 0.01, at most 0.1, and no clear speech/silence flip |
+
+The tolerances leave room over what WebGPU differs from CPU, measured on host Node and in slicc-kernel (both alike): decoder mean 0.026–0.053 nats (max 0.4, flips only below a 0.2 margin), System One mean 0.006 (max 0.027), Kokoro 0.15–0.24 dB, Whisper and Silero none. Kokoro's `q8` variant lands at 2–5 dB and its `fp16` on WebGPU, which sounds garbled, at 25 dB. Fixtures hold the default variant; other variants can fall outside them, and `check` says so. `node scripts/fixtures.mjs <model>…` writes them on the host CPU (`node scripts/fixtures.mjs audio` makes the clips with Kokoro).
+
+## Execution providers
+
+A model loads on one execution provider at a time, with `cpu` (`wasm` in the browser) for the operators that provider lacks. When a session cannot be created, such as CUDA without its libraries, the model loads on the next provider in the order, down to `cpu` alone, and each reason is logged once. Providers this ONNX Runtime does not have are skipped with a warning. The order is the first of:
+
+1. `ORTLLAMA_EP`, such as `cuda,cpu`. It beats every hint because it is the operator's switch for one process: `ORTLLAMA_EP=cpu` keeps every model off the GPU, whatever `config.json` says.
+2. The model's hint in `config.json`, such as `{ "hints": { "onnx-community/whisper-tiny": { "executionProviders": ["webgpu", "cpu"] } } }`. A model loaded with a hint is a separate loaded model.
+3. The engine's preference: Whisper models with up to 6 encoder layers (`tiny`, `base`) and Silero VAD use `cpu` on Node, which leaves the GPU to chat and System One (small Whisper decoder steps are as fast there as on WebGPU, and Silero's frames much faster), and Silero uses `wasm` in the browser. Larger Whisper models, such as `large-v3-turbo`, take the host's default, since their encoder runs five times faster on WebGPU.
+4. The host's default, chosen from what `onnxruntime-node` 1.30 ships there:
+
+| Host | onnxruntime-node 1.30 has | Default |
+| --- | --- | --- |
+| macOS arm64 | `cpu`, `webgpu`, `coreml` | `webgpu,cpu`; CoreML runs only 147 of Kev's 675 nodes |
+| Linux x64 | `cpu`, `webgpu`, `cuda` and `tensorrt` (CUDA 12 libraries fetched by its install script) | `cuda,webgpu,cpu` |
+| Linux arm64 | `cpu` | `cpu` |
+| Windows x64, arm64 | `cpu`, `webgpu`, `dml` | `webgpu,dml,cpu` |
+| macOS x64 | no binary | |
+| browser (`onnxruntime-web`) | `webgpu`, `wasm` | `webgpu,wasm`, or `wasm` without WebGPU |
+
+`ortllama ps` and `GET /ortllama/ps` report, per model, the `executionProviders` it loaded on, where the order came from (`providerSource`: `env`, `hint`, `engine` or `default`) and `modelBytes`, the size on disk of the variant's files; and, as `memory`, the process's `rss`, `heapUsed`, `external` and `arrayBuffers` on Node (`null` in slicc-kernel, where `process.memoryUsage()` answers zeros). ONNX Runtime 1.30 reports no memory of its own: `onnxruntime-node` has no arena statistics and `onnxruntime-web` no GPU buffer usage, so ortllama shows none.
 
 ## Configuration
 
@@ -234,7 +284,7 @@ A model whose library is missing is still listed, and requests for it answer `50
 | `ORTLLAMA_KEEP_ALIVE` | `5m` | unload an idle model after this long (`-1` keeps it) |
 | `ORTLLAMA_MAX_LOADED` | `1` | models kept loaded at once |
 | `ORTLLAMA_MAX_TOKENS` | `8192` | completion tokens for a chat request that sets no limit |
-| `ORTLLAMA_EP` | `webgpu,cpu` on Node, `webgpu,wasm` in the browser | execution providers, in order |
+| `ORTLLAMA_EP` | per host, see [Execution providers](#execution-providers) | execution providers, in order, for every model |
 | `ORTLLAMA_MODEL_PATH` | none | extra plain folders, listed as `local/<name>` |
 | `ORTLLAMA_MODULE_PATH` | none | project folders searched for model libraries such as `@ai-ecoverse/kev.js` and `espeak-ng` |
 | `ORTLLAMA_ORT_LOG_LEVEL` | `error` | ONNX Runtime's log level |
@@ -250,7 +300,7 @@ Node ≥ 24.
 | `npm test` | integration tests in `test/integration/` |
 | `npm run test:unit` | unit tests, which stay local in `test/unit/` |
 
-Each integration test runs when its models are in the Hugging Face cache; `ORTLLAMA_REQUIRE_MODEL=1` makes a missing model a failure.
+Each integration test runs when its models are in the Hugging Face cache; `ORTLLAMA_REQUIRE_MODEL=1` makes a missing model a failure, and `ORTLLAMA_TEST_WHISPER` runs the Whisper and realtime tests on another Whisper model, such as `onnx-community/whisper-base`.
 
 | Tests | Models |
 | --- | --- |

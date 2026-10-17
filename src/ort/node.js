@@ -1,7 +1,14 @@
 import { providersFrom } from './providers.js';
 
+const DEFAULTS = {
+  'darwin/arm64': ['webgpu', 'cpu'],
+  'linux/x64': ['cuda', 'webgpu', 'cpu'],
+  'win32/x64': ['webgpu', 'dml', 'cpu'],
+  'win32/arm64': ['webgpu', 'dml', 'cpu'],
+};
+
 export function defaultProviders(platform = process.platform, arch = process.arch) {
-  return platform === 'linux' && arch === 'arm64' ? ['cpu'] : ['webgpu', 'cpu'];
+  return DEFAULTS[`${platform}/${arch}`] ?? ['cpu'];
 }
 
 function binaryHalf(tensor) {
@@ -46,8 +53,10 @@ export async function loadBackend({
     ort: withHalfInputs(ort),
     track: 'node',
     env,
-    executionProviders: providersFrom(env, defaultProviders(platform, arch)),
+    executionProviders: defaultProviders(platform, arch),
+    overrideProviders: providersFrom(env),
     fallbackProviders: ['cpu'],
+    availableProviders: ort.listSupportedBackends?.().map((b) => b.name) ?? null,
     sessionOptions: { preferredOutputLocation: 'cpu' },
   };
 }

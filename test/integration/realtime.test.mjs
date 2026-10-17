@@ -6,7 +6,7 @@ import { openCatalog, startServer } from '../../src/index.js';
 import { realtimeTranscriptionModel } from '../../src/pi-audio.js';
 import { FOX, foxWav, pcm24 } from './audio.mjs';
 
-const WHISPER = 'onnx-community/whisper-tiny';
+const WHISPER = process.env.ORTLLAMA_TEST_WHISPER ?? 'onnx-community/whisper-tiny';
 const VAD = 'onnx-community/silero-vad';
 const KEY = 'sekrit';
 const CHUNK = 960;

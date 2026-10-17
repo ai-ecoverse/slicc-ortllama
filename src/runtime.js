@@ -1,3 +1,5 @@
+import { providerAttempts, providerOrder } from './ort/providers.js';
+
 export const PRIORITY = { expire: -1, realtime: 0, speech: 1, decisions: 2, chat: 3, admin: 4 };
 
 function abortError(signal) {
@@ -8,6 +10,18 @@ function abortError(signal) {
 
 const noop = () => {};
 
+export function processMemory(proc = globalThis.process) {
+  const usage = proc?.memoryUsage?.();
+  if (!usage?.rss) return null;
+  const { rss, heapUsed, external, arrayBuffers } = usage;
+  return { rss, heapUsed, external, arrayBuffers };
+}
+
+async function bytesOf({ files, engine, info, variant }) {
+  if (!files?.bytes || !engine.include) return null;
+  return files.bytes(engine.include(info, variant)).catch(() => null);
+}
+
 export class Runtime {
   constructor({
     loadBackend,
@@ -15,12 +29,17 @@ export class Runtime {
     maxLoaded = 1,
     now = Date.now,
     timers = globalThis,
+    warn = (message) => console.warn(message),
+    memory = processMemory,
   }) {
     this.loadBackend = loadBackend;
     this.keepAliveMs = keepAliveMs;
     this.maxLoaded = maxLoaded;
     this.now = now;
     this.timers = timers;
+    this.warn = warn;
+    this.memory = memory;
+    this.warned = new Set();
     this.loaded = new Map();
     this.queue = [];
     this.running = false;
@@ -151,25 +170,32 @@ export class Runtime {
     await this.evict(this.maxLoaded - 1 - fixed);
     const backend = await this.backend();
     const started = this.now();
-    let executionProviders = backend.executionProviders;
+    const { order, source } = providerOrder(backend, resolved);
+    const { attempts, skipped } = providerAttempts(order, backend);
+    for (const ep of skipped)
+      this.warnOnce(
+        `ortllama: onnxruntime-${backend.track} has no ${ep} execution provider here; skipping it`
+      );
+    let executionProviders;
     let instance;
-    try {
-      instance = await resolved.engine.load({
-        backend,
-        files: resolved.files,
-        variant: resolved.variant,
-        info: resolved.info,
-      });
-    } catch (error) {
-      const fallback = backend.fallbackProviders;
-      if (error.status || !fallback || fallback.join() === executionProviders.join()) throw error;
-      executionProviders = fallback;
-      instance = await resolved.engine.load({
-        backend: { ...backend, executionProviders },
-        files: resolved.files,
-        variant: resolved.variant,
-        info: resolved.info,
-      });
+    for (const [i, eps] of attempts.entries()) {
+      try {
+        instance = await resolved.engine.load({
+          backend: { ...backend, executionProviders: eps },
+          files: resolved.files,
+          variant: resolved.variant,
+          info: resolved.info,
+        });
+        executionProviders = eps;
+        break;
+      } catch (error) {
+        const next = attempts[i + 1];
+        if (error.status || !next) throw error;
+        this.warnOnce(
+          `ortllama: ${resolved.id} cannot load on ${eps.join(',')}, using ${next.join(',')}: ${error.message}`,
+          `${eps.join(',')}\n${error.message}`
+        );
+      }
     }
     const entry = {
       key: resolved.key,
@@ -177,6 +203,8 @@ export class Runtime {
       variant: resolved.variant,
       engine: resolved.engine.name,
       executionProviders,
+      providerSource: source,
+      modelBytes: await bytesOf(resolved),
       instance,
       loadedAt: started,
       loadMs: this.now() - started,
@@ -189,6 +217,12 @@ export class Runtime {
     };
     this.loaded.set(resolved.key, entry);
     return entry;
+  }
+
+  warnOnce(message, key = message) {
+    if (this.warned.has(key)) return;
+    this.warned.add(key);
+    this.warn(message);
   }
 
   touch(entry) {
@@ -234,11 +268,24 @@ export class Runtime {
 
   ps() {
     return [...this.loaded.values()].map(
-      ({ id, variant, engine, executionProviders, loadMs, lastUsed, expiresAt, pins }) => ({
+      ({
         id,
         variant,
         engine,
         executionProviders,
+        providerSource,
+        modelBytes,
+        loadMs,
+        lastUsed,
+        expiresAt,
+        pins,
+      }) => ({
+        id,
+        variant,
+        engine,
+        executionProviders,
+        providerSource,
+        modelBytes,
         loadMs,
         lastUsed: new Date(lastUsed).toISOString(),
         expiresAt: expiresAt === null ? null : new Date(expiresAt).toISOString(),

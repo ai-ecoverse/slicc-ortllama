@@ -39,7 +39,7 @@ export function createRoutes({ catalog, runtime, version, maxTokens }) {
         return { object: 'list', data };
       },
     },
-    'GET /ortllama/ps': { handle: () => ({ models: runtime.ps() }) },
+    'GET /ortllama/ps': { handle: () => ({ models: runtime.ps(), memory: runtime.memory() }) },
     'POST /v1/chat/completions': chatRoute({ catalog, runtime, maxTokens }),
     'POST /v1/systemone': {
       async handle({ body, signal }) {
