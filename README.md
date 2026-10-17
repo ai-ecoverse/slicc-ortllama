@@ -80,19 +80,20 @@ A realtime session re-decodes the growing turn about every 500 ms of audio and s
 ```sh
 hf download onnx-community/Kokoro-82M-v1.0-ONNX --include config.json tokenizer.json onnx/model.onnx 'voices/*'
 hf download hexgrad/misaki --repo-type dataset --include 'us_*.json' 'gb_*.json'
+npm install phonemize
 curl -s localhost:11435/v1/audio/speech -H 'content-type: application/json' \
   -d '{ "input": "Hello from the kernel.", "voice": "bf_emma" }' > hello.wav
 ```
 
 Voices are Kokoro's American (`af_*`, `am_*`) and British English (`bf_*`, `bm_*`), Spanish (`e`), French (`f`), Hindi (`h`), Italian (`i`) and Brazilian Portuguese (`p`) voices; Japanese and Chinese are left out, since they have no phonemizer here. Variants are the repo's quantizations (`fp32`, `fp16`, `q8`, `q8f16`, `q4`, `q4f16`, `uint8`, `uint8f16`); `fp32` is the default: it is the fastest on CPU, and `fp16`, though faster on WebGPU, comes out garbled there.
 
-Kokoro needs a phonemizer, and ortllama ships none: npm phonemizers are imported at runtime wherever ortllama can find them, the misaki lexicon comes from the Hugging Face cache, and speech answers `501` with `code: "engine_unavailable"`, naming what to install, until one is there. They are tried in this order, and the first that knows a voice's language speaks it; `ORTLLAMA_PHONEMIZERS` (such as `phonemize,espeak-ng`) changes the order or leaves some out. A phonemizer that fails while speaking is skipped for a minute, and the next one speaks. Other heteronyms, such as past-tense `read` or `bass`, take the lexicon's usual reading until there is a part-of-speech tagger.
+Kokoro needs a phonemizer, and ortllama ships none: npm phonemizers are imported at runtime wherever ortllama can find them, the misaki lexicon comes from the Hugging Face cache, and speech answers `501` with `code: "engine_unavailable"`, naming what to install, until one is there. **The recommended setup is misaki plus `phonemize`:** it has no GPL code, and in listening tests it was the best of the combinations. It's not perfect, but usable, and English only. Add `espeak-ng` for the Spanish, French, Hindi, Italian and Portuguese voices. Phonemizers are tried in the table's order, and the first that knows a voice's language speaks it, so English stays with misaki and `phonemize` even when `espeak-ng` is installed; `ORTLLAMA_PHONEMIZERS` (such as `phonemize,espeak-ng`) changes the order or leaves some out. A phonemizer that fails while speaking is skipped for a minute, and the next one speaks. Other heteronyms, such as past-tense `read` or `bass`, take the lexicon's usual reading until there is a part-of-speech tagger.
 
 | Phonemizer | Get it | Languages | Licence | |
 | --- | --- | --- | --- | --- |
 | `misaki` | `hf download hexgrad/misaki --repo-type dataset` (6–7 MB per accent) | English | Apache-2.0 | the lexicons of [misaki](https://github.com/hexgrad/misaki), the G2P Kokoro was trained with; words it does not know, and verbs whose reading differs from the noun's (`lives`, `record`, `tear`), go with their sentence to the next English phonemizer, and when there is none, numbers, ordinals and symbols are read out and unknown words spelled |
-| `espeak-ng` | `npm install espeak-ng` (18 MB) | all of the above | GPL-3.0-or-later | the only one for Spanish, French, Hindi, Italian and Portuguese |
 | `phonemize` | `npm install phonemize` (3 MB) | English | MIT | pure JavaScript rules and lexicon; British vowels are mapped onto American output, so words like `bath` keep the short vowel |
+| `espeak-ng` | `npm install espeak-ng` (18 MB) | all of the above | GPL-3.0-or-later | optional; the only one for Spanish, French, Hindi, Italian and Portuguese |
 | `phonemizer` | `npm install phonemizer` (2.6 MB) | English | labelled Apache-2.0, but bundles espeak-ng (GPL-3.0-or-later) | the same phonemes as `espeak-ng` |
 
 ```js
@@ -134,7 +135,7 @@ Model-specific libraries are never installed with ortllama. They are devDependen
 | `ORTLLAMA_MODEL_PATH` | none | extra plain folders, listed as `local/<name>` |
 | `ORTLLAMA_MODULE_PATH` | none | project folders searched for model libraries such as `@ai-ecoverse/kev.js` and `espeak-ng` |
 | `ORTLLAMA_ORT_LOG_LEVEL` | `error` | ONNX Runtime's log level |
-| `ORTLLAMA_PHONEMIZERS` | `misaki,espeak-ng,phonemize,phonemizer` | Kokoro's phonemizers, in order |
+| `ORTLLAMA_PHONEMIZERS` | `misaki,phonemize,espeak-ng,phonemizer` | Kokoro's phonemizers, in order |
 
 ## Develop
 
