@@ -1,4 +1,5 @@
-import { toMono16k } from './audio/pcm.js';
+import { decodeFile } from './audio/decode.js';
+import { AudioFormatError } from './audio/pcm.js';
 import { badRequest } from './http/errors.js';
 import { parseMultipart } from './http/multipart.js';
 import { PRIORITY } from './runtime.js';
@@ -52,7 +53,7 @@ export function formatTranscript(result, format) {
   };
 }
 
-export function transcriptionRoutes({ catalog, runtime }) {
+export function transcriptionRoutes({ catalog, runtime, decode = decodeFile }) {
   return {
     'POST /v1/audio/transcriptions': {
       raw: true,
@@ -68,8 +69,9 @@ export function transcriptionRoutes({ catalog, runtime }) {
           throw badRequest(`model ${resolved.id} does not transcribe audio`, 'model');
         let audio;
         try {
-          audio = toMono16k(file.data, file.type);
+          audio = await decode(file.data, { type: file.type, name: file.filename });
         } catch (error) {
+          if (!(error instanceof AudioFormatError)) throw error;
           throw badRequest(error.message, 'file');
         }
         if (audio.length === 0) throw badRequest('the audio file has no samples', 'file');

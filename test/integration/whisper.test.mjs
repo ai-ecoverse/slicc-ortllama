@@ -4,7 +4,7 @@ import { transcribe } from '@ai-ecoverse/pi-audio';
 import { registerOpenAI } from '@ai-ecoverse/pi-audio/openai';
 import { openCatalog, startServer } from '../../src/index.js';
 import { transcriptionModel } from '../../src/pi-audio.js';
-import { FOX, foxWav, pcm24 } from './audio.mjs';
+import { FOX, fixture, foxWav, pcm24 } from './audio.mjs';
 
 const WHISPER = 'onnx-community/whisper-tiny';
 
@@ -59,6 +59,29 @@ describe('Whisper transcription through pi-audio', { skip }, () => {
     assert.match(result.text.toLowerCase(), FOX);
   });
 
+  test('transcribes mp3, flac, Ogg Opus and WebM Opus', async () => {
+    for (const [ext, mimeType] of [
+      ['mp3', 'audio/mpeg'],
+      ['flac', 'audio/flac'],
+      ['opus', 'audio/opus'],
+    ]) {
+      const result = await transcribe(
+        model,
+        { data: await fixture(ext), mimeType },
+        { apiKey: 'x' }
+      );
+      assert.match(result.text.toLowerCase(), FOX, ext);
+    }
+    const form = new FormData();
+    form.set('file', new Blob([await fixture('webm')]), 'clip.webm');
+    form.set('model', WHISPER);
+    const webm = await fetch(`${server.url}/v1/audio/transcriptions`, {
+      method: 'POST',
+      body: form,
+    });
+    assert.match((await webm.json()).text.toLowerCase(), FOX);
+  });
+
   test('answers verbose_json and text, and refuses formats it cannot decode', async () => {
     const post = (fields, type = 'audio/wav', data = wav) => {
       const form = new FormData();
@@ -74,9 +97,11 @@ describe('Whisper transcription through pi-audio', { skip }, () => {
     assert.ok(Array.isArray(verbose.segments[0].tokens));
     const text = await (await post({ model: WHISPER, response_format: 'text' })).text();
     assert.match(text.toLowerCase(), FOX);
-    const mp3 = await post({ model: WHISPER }, 'audio/mpeg', new Uint8Array([0xff, 0xfb, 0x90]));
-    assert.equal(mp3.status, 400);
-    assert.equal((await mp3.json()).error.param, 'file');
+    const aac = await post({ model: WHISPER }, 'audio/aac', new Uint8Array([0xff, 0xf1, 0x50]));
+    assert.equal(aac.status, 400);
+    const { error } = await aac.json();
+    assert.equal(error.param, 'file');
+    assert.match(error.message, /audio\/aac is not supported; send wav, mp3, flac/);
     const klingon = await post({ model: WHISPER, language: 'tlh' });
     assert.equal(klingon.status, 400);
     assert.equal((await klingon.json()).error.param, 'language');

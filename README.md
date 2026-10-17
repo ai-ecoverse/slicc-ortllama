@@ -52,7 +52,7 @@ In slicc-kernel, `onnxruntime-node` is not needed: the `slicc` export condition 
 | `GET /v1/models` | models and role aliases; System One models list `decisions` in `architecture.output_modalities` |
 | `POST /v1/chat/completions` | OpenAI chat completions, streamed as `chat.completion.chunk`s with `stream: true`, on the decoder engine |
 | `POST /v1/systemone` | TypeSafe's System One protocol, on [kev.js](https://github.com/ai-ecoverse/kev.js) |
-| `POST /v1/audio/transcriptions` | OpenAI's transcription API on Whisper: multipart `file`, `model`, `language`, `prompt`, `response_format` (`json`, `verbose_json`, `text`, `srt`, `vtt`); WAV or 16-bit `audio/pcm` (`;rate=N`, default 24 kHz) |
+| `POST /v1/audio/transcriptions` | OpenAI's transcription API on Whisper: multipart `file`, `model`, `language`, `prompt`, `response_format` (`json`, `verbose_json`, `text`, `srt`, `vtt`); WAV, mp3, FLAC, Ogg or WebM Opus, or 16-bit `audio/pcm` (`;rate=N`, default 24 kHz) |
 | `GET /v1/realtime?intent=transcription` | OpenAI's realtime transcription over WebSocket (subprotocol `realtime`): `session.update`, `input_audio_buffer.append`/`commit`/`clear` in; `session.created`/`updated`, `input_audio_buffer.speech_started`/`speech_stopped`/`committed`/`cleared`, `conversation.item.input_audio_transcription.delta`/`completed` and `error` out. `audio/pcm` at 8–48 kHz (24 kHz by default), `server_vad` on Silero VAD or manual commits (`turn_detection: null`) |
 | `POST /v1/audio/speech` | OpenAI's text to speech, on [Kokoro-82M](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) |
 | `GET /ortllama/ps` | loaded models |
@@ -67,7 +67,7 @@ User messages may carry images as OpenAI `image_url` parts (`{ "type": "image_ur
 
 System One requests to a kev.js vision bundle (such as `ai-ecoverse/kev.js/kev-0.8b-vision`) take an `image` field, a `data:` URL string or `{ "url": … }`, decoded to RGBA for kev.js; text-only bundles answer it with `400`. pi-ai's System One client does not send images yet.
 
-Transcriptions answer `{ text, language, duration, segments, usage: { type: "duration", seconds } }`. Audio longer than 30 seconds is decoded in windows that follow Whisper's timestamps; the language is detected when the request names none. Other audio formats answer `400` for now.
+Transcriptions answer `{ text, language, duration, segments, usage: { type: "duration", seconds } }`. Audio longer than 30 seconds is decoded in windows that follow Whisper's timestamps; the language is detected when the request names none. The format comes from the file's first bytes, else its content type or file name, and is decoded the same way on both tracks: mp3 on [minimp3](https://github.com/lieff/minimp3) and Opus on libopus, both in WebAssembly, FLAC in JavaScript. Audio longer than 30 minutes, and other formats (AAC, M4A, MP4, Vorbis), answer `400`.
 
 A realtime session re-decodes the growing turn about every 500 ms of audio and sends the words two decodes agree on as deltas, then the full transcript when the turn ends: on `silence_duration_ms` of silence (500 ms by default), when no audio has arrived for that long, on `commit`, after 30 seconds of speech, or when the socket closes. `threshold` is kept between 0.2 and 0.95, `prefix_padding_ms` between 0 and 2000 and `silence_duration_ms` between 100 and 10000. `clear` drops transcripts that are still being decoded. A socket that sends nothing for 60 seconds is closed. The WebSocket takes the API key as `Authorization: Bearer` or as the `openai-insecure-api-key.<key>` subprotocol that browsers use, and answers only loopback, `*.localhost` and `ORTLLAMA_ORIGINS` origins. The Whisper model and the one Silero VAD session that all sockets share stay loaded while a session is open, so open realtime sessions can push the number of loaded models past `ORTLLAMA_MAX_LOADED`.
 
@@ -75,7 +75,7 @@ A realtime session re-decodes the growing turn about every 500 ms of audio and s
 
 ### Speech
 
-`POST /v1/audio/speech` takes `{ model, input, voice, response_format, speed, instructions }`. `model` defaults to the `speech` role, `voice` to `af_heart`, and `instructions` is accepted and ignored. `response_format` is `wav` (the default) or `pcm`, 24 kHz mono 16-bit little-endian; other formats answer `400`. `input` takes up to 4096 characters; it is split into sentences, long ones at clause marks or spaces, and each piece's audio is sent as soon as it is ready.
+`POST /v1/audio/speech` takes `{ model, input, voice, response_format, speed, instructions }`. `model` defaults to the `speech` role, `voice` to `af_heart`, and `instructions` is accepted and ignored. `response_format` is `wav` (the default), `pcm` (24 kHz mono 16-bit little-endian), `mp3` (`audio/mpeg`, 64 kbit/s), `opus` (Ogg Opus, `audio/opus`, 32 kbit/s) or `flac` (`audio/flac`); `aac` answers `400`. mp3 is encoded by `@breezystack/lamejs` (LGPL-3.0), which ortllama does not ship and finds like a phonemizer (`npm install @breezystack/lamejs`); without it, `mp3` answers `501`. `input` takes up to 4096 characters; it is split into sentences, long ones at clause marks or spaces, and each piece's audio is sent as soon as it is ready.
 
 ```sh
 hf download onnx-community/Kokoro-82M-v1.0-ONNX --include config.json tokenizer.json onnx/model.onnx 'voices/*'

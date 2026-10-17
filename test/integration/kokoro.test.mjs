@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { speak } from '@ai-ecoverse/pi-audio';
 import { registerOpenAI } from '@ai-ecoverse/pi-audio/openai';
+import { decodeFile } from '../../src/audio/decode.js';
 import { hubCache, openCatalog, startServer } from '../../src/index.js';
 import { speechModel } from '../../src/pi-audio.js';
 
@@ -116,6 +117,43 @@ describe('Kokoro speech through pi-audio', { skip }, () => {
     plausible(bytes / 48000, TEXT);
   });
 
+  test('streams mp3, Ogg Opus and FLAC that decode back to speech', async () => {
+    const input = `${TEXT} It was never seen again. The dog slept on.`;
+    const magic = { mp3: [0x49, 0x44, 0x33], opus: [0x4f, 0x67, 0x67, 0x53], flac: [0x66, 0x4c] };
+    for (const [format, type] of [
+      ['mp3', 'audio/mpeg'],
+      ['opus', 'audio/opus'],
+      ['flac', 'audio/flac'],
+    ]) {
+      const started = performance.now();
+      const response = await fetch(`${server.url}/v1/audio/speech`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ input, voice: 'af_heart', response_format: format }),
+      });
+      assert.equal(response.status, 200, format);
+      assert.equal(response.headers.get('content-type'), type);
+      const chunks = [];
+      let first;
+      for await (const chunk of response.body) {
+        first ??= performance.now() - started;
+        chunks.push(chunk);
+      }
+      const total = performance.now() - started;
+      assert.ok(first < total * 0.8, `${format}: first bytes after ${first} of ${total} ms`);
+      const bytes = new Uint8Array(Buffer.concat(chunks));
+      if (format !== 'mp3')
+        assert.deepEqual([...bytes.subarray(0, magic[format].length)], magic[format]);
+      else assert.ok(bytes[0] === 0xff || bytes[0] === 0x49, format);
+      const samples = await decodeFile(bytes, { rate: 24000 });
+      let sum = 0;
+      for (const x of samples) sum += x * x;
+      const rms = Math.sqrt(sum / samples.length);
+      plausible(samples.length / 24000, input);
+      assert.ok(rms > 0.02, `${format}: rms ${rms}`);
+    }
+  });
+
   const post = (body, signal) =>
     fetch(`${server.url}/v1/audio/speech`, {
       method: 'POST',
@@ -150,9 +188,9 @@ describe('Kokoro speech through pi-audio', { skip }, () => {
   });
 
   test('names the supported formats and voices', async () => {
-    const mp3 = await post({ response_format: 'mp3' });
-    assert.equal(mp3.status, 400);
-    assert.match((await mp3.json()).error.message, /use one of pcm, wav/);
+    const aac = await post({ response_format: 'aac' });
+    assert.equal(aac.status, 400);
+    assert.match((await aac.json()).error.message, /use one of wav, pcm, mp3, opus, flac/);
     const voice = await post({ voice: '../../etc/passwd' });
     assert.equal(voice.status, 400);
     assert.equal((await voice.json()).error.param, 'voice');

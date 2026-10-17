@@ -7,8 +7,13 @@ const tokenCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const pcm24 = { encoding: 'pcm16', sampleRate: 24000, channels: 1 };
 const wav16 = { encoding: 'wav', sampleRate: 16000, channels: 1 };
 const wav24 = { encoding: 'wav', sampleRate: 24000, channels: 1 };
+const coded = (encoding, sampleRate) => ({ encoding, sampleRate, channels: 1 });
 
-export const SPEECH_FORMATS = [pcm24, wav24];
+export const SPEECH_FORMATS = [
+  pcm24,
+  wav24,
+  ...['mp3', 'opus', 'flac'].map((e) => coded(e, 24000)),
+];
 
 function base(id, name, baseUrl, api) {
   return { id, name: name ?? id, api, provider: 'ortllama', baseUrl, cost: tokenCost };
@@ -20,7 +25,7 @@ export function transcriptionModel({ id = 'transcribe', name, baseUrl = DEFAULT_
     type: 'transcription',
     streaming: false,
     turnDetection: 'none',
-    inputFormats: [wav16, pcm24],
+    inputFormats: [wav16, pcm24, ...['mp3', 'flac', 'opus'].map((e) => coded(e, 16000))],
     audioCost: { perInputMinute: 0 },
   };
 }
