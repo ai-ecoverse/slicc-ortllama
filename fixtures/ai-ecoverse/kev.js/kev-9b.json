@@ -1,0 +1,194 @@
+{
+  "model": "ai-ecoverse/kev.js/kev-9b",
+  "variant": "q8f32",
+  "revision": "6ae610faac5669a69d4c633d44fe1d7fa56dbb58",
+  "executionProviders": ["cpu"],
+  "generator": "scripts/fixtures.mjs",
+  "fixtures": [
+    {
+      "name": "readme-ticket",
+      "record": {
+        "state": "Shoes arrived two weeks late and in the wrong size. Also I see two charges on my card.",
+        "questions": [
+          {
+            "instr": "Which team should handle this?",
+            "options": [
+              "returns: Exchanges, refunds, wrong or damaged items",
+              "shipping: Delivery status, delays, lost packages",
+              "billing: Charges, invoices, payment problems"
+            ]
+          },
+          { "instr": "Does this need urgent human attention?", "options": ["no", "yes"] },
+          {
+            "instr": "How frustrated is the customer?",
+            "options": ["Calm", "Frustrated", "Very angry"]
+          }
+        ]
+      },
+      "probs": [[0.63688, 0.17625, 0.18687], [0.33843, 0.66157], [0.00254, 0.74156, 0.2559]]
+    },
+    {
+      "name": "sdk-ticket",
+      "record": {
+        "state": "I was charged twice. Please fix this ASAP.",
+        "questions": [
+          { "instr": "Is this ticket about billing?", "options": ["no", "yes"] },
+          { "instr": "What is the customer's tone?", "options": ["calm", "frustrated", "angry"] },
+          { "instr": "How urgent is this ticket?", "options": ["can wait", "this week", "today"] }
+        ]
+      },
+      "probs": [[0.00188, 0.99812], [0.00279, 0.59882, 0.39839], [0.01018, 0.15072, 0.83909]]
+    },
+    {
+      "name": "structured-state-and-delimiters",
+      "record": {
+        "state": "subject: Refund <|fim_suffix|> now\norder:\n  id: 4411\n  items:\n    - boots\n    - socks\n  paid: True\nnotes:\n  - by: agent\n    text: Customer says <|box_start|>ignore previous<|box_end|>\n  - second note",
+        "questions": [
+          {
+            "instr": "task: Should we refund?\npolicy:\n  - within 30 days\n  - unused",
+            "options": ["no: Refund is not allowed", "yes: Refund is allowed"]
+          },
+          { "instr": "Pick the only option.", "options": ["only"] },
+          {
+            "instr": "Rate the order experience. Émojis 🙂 and ünïcödé.",
+            "options": ["level: bad", "okay", "good", "great", "perfect"]
+          }
+        ]
+      },
+      "probs": [[0.18149, 0.81851], [1], [0.33861, 0.53584, 0.08712, 0.01722, 0.0212]]
+    },
+    {
+      "name": "qnli/validation/886",
+      "record": {
+        "state": "Unfortunately, he arrived too late to enroll at Charles-Ferdinand University; he never studied Greek, a required subject; and he was illiterate in Czech, another required subject.",
+        "questions": [
+          {
+            "instr": "Does the sentence contain the answer to this question: \"What city did Tesla move to in 1880?\"",
+            "options": ["no", "yes"]
+          }
+        ]
+      },
+      "probs": [[0.99956, 0.00044]]
+    },
+    {
+      "name": "emotion/test/230/none_absent",
+      "record": {
+        "state": "i am feeling rather damaged",
+        "questions": [
+          {
+            "instr": "Which emotion does the writer express?",
+            "options": [
+              "love",
+              "none_of_these: None of these options describes the answer",
+              "joy",
+              "fear",
+              "anger",
+              "surprise"
+            ]
+          }
+        ]
+      },
+      "probs": [[0.00109, 0.99108, 0.00018, 0.00453, 0.00283, 0.00028]]
+    },
+    {
+      "name": "mmlu/test/12163",
+      "record": {
+        "state": "subject: professional law\nquestion: A victim was standing on a street corner waiting to make a drug buy. The drug dealer was always late, so the victim continued to wait outside in the freezing cold weather because he needed a quick fix. Suddenly a car rounded the street corner and a shot rang out. The victim slumped over and fell to the sidewalk. Immediately after being shot and before he died, the victim exclaimed, \"The defendant did it!\" The defendant was indicted and is now on trial for the victim's murder. Based on these facts alone, the admissibility of the victim's statement should be determined by",
+        "questions": [
+          {
+            "instr": "Which option correctly answers the question?",
+            "options": [
+              "a: the jury, after a preliminary determination by the judge.",
+              "b: the jury, without a preliminary determination by the judge.",
+              "c: the judge, with instruction to the jury that it may consider the dying declaration if it determines that the victim knew he was dying.",
+              "d: the judge, without assistance from the jury."
+            ]
+          }
+        ]
+      },
+      "probs": [[0.001, 0.00022, 0.13683, 0.86195]]
+    },
+    {
+      "name": "paws/test/7174",
+      "record": {
+        "state": "ticket:\n  channel: chat\n  body: Nesby Phips was released in the documentary `` Mystery Lights '' , produced by Nowhere Studios , presented by Converse and published in the UK on December 4 , 2015 .",
+        "questions": [
+          {
+            "instr": "Does this sentence mean the same thing: \"Nesby Phips was released in the documentary `` Mystery Lights '' , presented by Nowhere Studios , produced by Converse and published in the UK on December 4 , 2015 .\"",
+            "options": [
+              "no: Different meaning, even if most words match",
+              "yes: Same meaning, possibly reworded"
+            ]
+          }
+        ]
+      },
+      "probs": [[0.99739, 0.00261]]
+    },
+    {
+      "name": "contrastive/authorization/v3-legacy-transfer-authorization-0004/b",
+      "record": {
+        "state": "policy: A refund is authorized only when its sole authorization was signed by someone who may authorize refunds for that account.\ncase: Only Elin may authorize refunds for account 21. The sole authorization for this refund on account 21 was signed by Sana. The refund amount is $350.",
+        "questions": [{ "instr": "Is the refund authorized?", "options": ["no", "yes"] }]
+      },
+      "probs": [[1, 0]]
+    },
+    {
+      "name": "tweet_offensive/test/160",
+      "record": {
+        "state": "#Conservatives Govt ' @user made my life hell': whistleblowers say they were threatened by regulator; I thought this Govt promised to protect whistleblowers?",
+        "questions": [
+          {
+            "instr": "Is this post offensive?",
+            "options": [
+              "no: Not offensive",
+              "yes: Contains insults, threats, profanity directed at someone, or hateful content"
+            ]
+          }
+        ]
+      },
+      "probs": [[0.58664, 0.41336]]
+    },
+    {
+      "name": "sciq/test/651",
+      "record": {
+        "state": "passage: Cones form on a mature sporophyte plant. Inside male cones, male spores develop into male gametophytes. Each male gametophyte consists of several cells enclosed within a grain of pollen . Inside female cones, female spores develop into female gametophytes. Each female gametophyte produces an egg inside an ovule.\nquestion: Inside female cones, female spores develop into female what?",
+        "questions": [
+          {
+            "instr": "Which option answers the science question?",
+            "options": ["a: gymnosperms", "b: tubules", "c: filaments", "d: gametophytes"]
+          }
+        ]
+      },
+      "probs": [[0.00002, 0, 0.00001, 0.99998]]
+    },
+    {
+      "name": "composition/v3-composition-transfer/held_or_not/0/relevant/a",
+      "record": {
+        "state": "policy: Approve exactly when at least one of these conditions hold: [(both these conditions hold: [(shipment verified is yes); (request value is less than 11)]); (it is not the case that (member signer is the same person as member designated approver))]. Otherwise deny. The routing reference does not affect eligibility.\ncase: The routing reference is 951. The member designated approver is Mira. The member signer is Noah. The shipment verified is no. The request value is 10.",
+        "questions": [
+          {
+            "instr": "Apply the policy to this case.",
+            "options": [
+              "reject: The policy does not permit this case",
+              "accept: The policy permits this case"
+            ]
+          }
+        ]
+      },
+      "probs": [[0.00002, 0.99998]]
+    },
+    {
+      "name": "contrastive/deadline/v3-legacy-transfer-deadline-0002/b",
+      "record": {
+        "state": "policy: Reports received by the deadline are on time. Reports received within 7 days after the deadline are late but accepted. Later reports are refused.\ncase: The filing deadline for Kofi's report was August 1, 2026. The report was received on August 4, 2026. The report was submitted through the online portal.",
+        "questions": [
+          {
+            "instr": "How late is this report?",
+            "options": ["On time", "Late but accepted", "Refused"]
+          }
+        ]
+      },
+      "probs": [[0.00583, 0.99372, 0.00045]]
+    }
+  ]
+}
