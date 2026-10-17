@@ -93,10 +93,5 @@
     "phonemizer": {
       "optional": true
     }
-  },
-  "overrides": {
-    "@ai-ecoverse/pi-audio": {
-      "@earendil-works/pi-ai": "$@earendil-works/pi-ai"
-    }
   }
 }
