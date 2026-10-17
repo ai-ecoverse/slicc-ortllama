@@ -3,6 +3,7 @@ import { toMono16k } from '../audio/pcm.js';
 import { badRequest } from '../http/errors.js';
 import { createWhisper, LanguageError } from '../whisper/model.js';
 import { createTokenizer } from '../whisper/tokenizer.js';
+import { missingExternal } from './external.js';
 
 export const WHISPER_VARIANTS = {
   fp32: '',
@@ -84,6 +85,8 @@ export const whisper = {
     const out = [];
     for (const rel of [...CONFIGS, encoderFile(variant), decoderFile(variant)])
       if (!(await files.exists(rel))) out.push(rel);
+    for (const rel of await missingExternal(files, [encoderFile(variant), decoderFile(variant)]))
+      out.push(rel);
     return out;
   },
   include(_info, variant) {

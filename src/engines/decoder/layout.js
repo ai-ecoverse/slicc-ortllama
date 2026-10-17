@@ -1,3 +1,5 @@
+import { missingExternal } from '../external.js';
+
 export const DTYPES = {
   q4f16: '_q4f16',
   q4: '_q4',
@@ -245,7 +247,7 @@ export function visionTarget(info, variant) {
 async function cached(files, vision) {
   for (const rel of ['preprocessor_config.json', vision.model, ...vision.data])
     if (!(await files.exists(rel))) return false;
-  return true;
+  return (await missingExternal(files, [vision.model])).length === 0;
 }
 
 export async function pickVision(files, info, variant) {
