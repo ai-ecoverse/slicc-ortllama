@@ -38,6 +38,20 @@ export function localRoots(env = process.env) {
   return (env.ORTLLAMA_MODEL_PATH ?? '').split(delimiter).filter(Boolean);
 }
 
+function hintedProviders(id, hint) {
+  const list = hint?.executionProviders;
+  if (list === undefined) return null;
+  if (
+    !Array.isArray(list) ||
+    list.length === 0 ||
+    !list.every((ep) => ep && typeof ep === 'string')
+  )
+    throw new TypeError(
+      `config.json hints.${id}.executionProviders must be a list of execution provider names`
+    );
+  return list;
+}
+
 async function specialized(engine, files, base, hint, variant) {
   const info = { ...base, hint: hint ?? {} };
   if (!engine.specialize || !info.variants.includes(variant)) return { info };
@@ -142,6 +156,7 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
         'variant_not_found'
       );
     }
+    const providers = hintedProviders(id, hints[id]);
     const { info, key } = await specialized(engine, files, found.info, hints[id], chosen);
     const missing = await engine.missing(files, info, chosen);
     const download = repo
@@ -165,7 +180,8 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
       info,
       files,
       download,
-      key: `${id}:${chosen}@${revision ?? 'local'}${key ? `+${key}` : ''}`,
+      providers,
+      key: `${id}:${chosen}@${revision ?? 'local'}${key ? `+${key}` : ''}${providers ? `+ep=${providers.join(',')}` : ''}`,
     };
   }
 

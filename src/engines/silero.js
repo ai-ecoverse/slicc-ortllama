@@ -51,6 +51,7 @@ export function createSileroVad(ort, session) {
 export const silero = {
   name: 'silero',
   capability: 'vad',
+  providers: { node: ['cpu'], web: ['wasm'] },
   async detect(files) {
     if (await files.exists('config.json')) return null;
     if (!(await isSilero(files, modelFile('fp32')))) return null;
@@ -75,7 +76,7 @@ export const silero = {
     const session = await backend.ort.InferenceSession.create(
       await files.read(modelFile(variant)),
       {
-        executionProviders: backend.fallbackProviders ?? backend.executionProviders,
+        executionProviders: backend.executionProviders,
         ...backend.sessionOptions,
       }
     );

@@ -55,7 +55,7 @@ In slicc-kernel, `onnxruntime-node` is not needed: the `slicc` export condition 
 | `POST /v1/audio/transcriptions` | OpenAI's transcription API on Whisper: multipart `file`, `model`, `language`, `prompt`, `response_format` (`json`, `verbose_json`, `text`, `srt`, `vtt`); WAV or 16-bit `audio/pcm` (`;rate=N`, default 24 kHz) |
 | `GET /v1/realtime?intent=transcription` | OpenAI's realtime transcription over WebSocket (subprotocol `realtime`): `session.update`, `input_audio_buffer.append`/`commit`/`clear` in; `session.created`/`updated`, `input_audio_buffer.speech_started`/`speech_stopped`/`committed`/`cleared`, `conversation.item.input_audio_transcription.delta`/`completed` and `error` out. `audio/pcm` at 8–48 kHz (24 kHz by default), `server_vad` on Silero VAD or manual commits (`turn_detection: null`) |
 | `POST /v1/audio/speech` | OpenAI's text to speech, on [Kokoro-82M](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) |
-| `GET /ortllama/ps` | loaded models |
+| `GET /ortllama/ps` | loaded models, their execution providers and size, and the process's memory |
 
 Errors use OpenAI's envelope, `{ "error": { "message", "type", "param", "code" } }`.
 
@@ -118,6 +118,26 @@ Engines are picked by the files a model has, not by its name. The decoder engine
 
 Model-specific libraries are never installed with ortllama. They are devDependencies here, and engines load them only when a model needs them, such as `@ai-ecoverse/kev.js` for System One and `espeak-ng`, `phonemize` or `phonemizer` for Kokoro. ortllama looks for each library next to itself, then in `ORTLLAMA_MODULE_PATH` (project folders that contain a `node_modules`), then in pnpm's global installs (`$PNPM_HOME/global/…`, including slicc-kernel's `/usr/local/share/pnpm`). A model whose library is missing is still listed, and requests for it answer `501` with code `engine_unavailable` and the package to install.
 
+## Execution providers
+
+A model loads on one execution provider at a time, with `cpu` (`wasm` in the browser) for the operators that provider lacks. When a session cannot be created, such as CUDA without its libraries, the model loads on the next provider in the order, down to `cpu` alone, and each reason is logged once. Providers this ONNX Runtime does not have are skipped with a warning. The order is the first of:
+
+1. `ORTLLAMA_EP`, such as `cuda,cpu`. It beats every hint because it is the operator's switch for one process: `ORTLLAMA_EP=cpu` keeps every model off the GPU, whatever `config.json` says.
+2. The model's hint in `config.json`, such as `{ "hints": { "onnx-community/whisper-tiny": { "executionProviders": ["webgpu", "cpu"] } } }`. A model loaded with a hint is a separate loaded model.
+3. The engine's preference: Whisper and Silero VAD use `cpu` on Node, which leaves the GPU to chat and System One (Whisper's small decoder steps are as fast there as on WebGPU, and Silero's frames much faster), and Silero uses `wasm` in the browser.
+4. The host's default, chosen from what `onnxruntime-node` 1.30 ships there:
+
+| Host | onnxruntime-node 1.30 has | Default |
+| --- | --- | --- |
+| macOS arm64 | `cpu`, `webgpu`, `coreml` | `webgpu,cpu`; CoreML runs only 147 of Kev's 675 nodes |
+| Linux x64 | `cpu`, `webgpu`, `cuda` and `tensorrt` (CUDA 12 libraries fetched by its install script) | `cuda,webgpu,cpu` |
+| Linux arm64 | `cpu` | `cpu` |
+| Windows x64, arm64 | `cpu`, `webgpu`, `dml` | `webgpu,dml,cpu` |
+| macOS x64 | no binary | |
+| browser (`onnxruntime-web`) | `webgpu`, `wasm` | `webgpu,wasm`, or `wasm` without WebGPU |
+
+`ortllama ps` and `GET /ortllama/ps` report, per model, the `executionProviders` it loaded on, where the order came from (`providerSource`: `env`, `hint`, `engine` or `default`) and `modelBytes`, the size on disk of the variant's files; and, as `memory`, the process's `rss`, `heapUsed`, `external` and `arrayBuffers` on Node (`null` in slicc-kernel, where `process.memoryUsage()` answers zeros). ONNX Runtime 1.30 reports no memory of its own: `onnxruntime-node` has no arena statistics and `onnxruntime-web` no GPU buffer usage, so ortllama shows none.
+
 ## Configuration
 
 | Variable | Default | |
@@ -130,7 +150,7 @@ Model-specific libraries are never installed with ortllama. They are devDependen
 | `ORTLLAMA_KEEP_ALIVE` | `5m` | unload an idle model after this long (`-1` keeps it) |
 | `ORTLLAMA_MAX_LOADED` | `1` | models kept loaded at once |
 | `ORTLLAMA_MAX_TOKENS` | `8192` | completion tokens for a chat request that sets no limit |
-| `ORTLLAMA_EP` | `webgpu,cpu` on Node, `webgpu,wasm` in the browser | execution providers, in order |
+| `ORTLLAMA_EP` | per host, see [Execution providers](#execution-providers) | execution providers, in order, for every model |
 | `ORTLLAMA_MODEL_PATH` | none | extra plain folders, listed as `local/<name>` |
 | `ORTLLAMA_MODULE_PATH` | none | project folders searched for model libraries such as `@ai-ecoverse/kev.js` and `espeak-ng` |
 | `ORTLLAMA_ORT_LOG_LEVEL` | `error` | ONNX Runtime's log level |

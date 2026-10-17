@@ -1,5 +1,5 @@
 import { readFile, realpath, stat } from 'node:fs/promises';
-import { join, normalize, sep } from 'node:path';
+import { join, normalize, posix, sep } from 'node:path';
 import { isDir, listDir } from './cache.js';
 
 function within(root, path) {
@@ -14,6 +14,11 @@ function inside(root, rel) {
 
 function missing(rel) {
   return Object.assign(new Error(`${rel} is not in the model directory`), { code: 'ENOENT' });
+}
+
+function glob(pattern) {
+  const parts = pattern.split('*').map((p) => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&'));
+  return new RegExp(`^${parts.join('.*')}$`);
 }
 
 export function modelFiles(root, { allow = [root] } = {}) {
@@ -54,6 +59,24 @@ export function modelFiles(root, { allow = [root] } = {}) {
         if (!name.startsWith('.') && (await isDir(join(root, name)))) out.push(name);
       }
       return out.sort();
+    },
+    async bytes(patterns) {
+      const seen = new Set();
+      let total = 0;
+      for (const pattern of patterns) {
+        const dir = posix.dirname(pattern);
+        const name = posix.basename(pattern);
+        const names = name.includes('*')
+          ? (await listDir(inside(root, dir))).filter((n) => glob(name).test(n))
+          : [name];
+        for (const n of names) {
+          const rel = dir === '.' ? n : `${dir}/${n}`;
+          if (seen.has(rel) || !(await files.exists(rel))) continue;
+          seen.add(rel);
+          total += await files.size(rel);
+        }
+      }
+      return total;
     },
     sub: (rel) => modelFiles(inside(root, rel), { allow }),
   };

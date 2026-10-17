@@ -31,6 +31,10 @@ function table(rows) {
     .join('\n');
 }
 
+function megabytes(bytes) {
+  return typeof bytes === 'number' ? `${Math.round(bytes / 1e6)} MB` : '-';
+}
+
 async function readRun(home) {
   try {
     return JSON.parse(await readFile(runFile(home), 'utf8'));
@@ -130,6 +134,7 @@ async function ps(values, io) {
     return 1;
   }
   let models;
+  let memory;
   try {
     const headers = io.env.ORTLLAMA_API_KEY
       ? { authorization: `Bearer ${io.env.ORTLLAMA_API_KEY}` }
@@ -143,24 +148,29 @@ async function ps(values, io) {
       return 1;
     }
     models = body.models;
+    memory = body.memory ?? null;
   } catch {
     io.err.write(`ortllama is not answering on ${run.url}\n`);
     return 1;
   }
   if (values.json)
-    io.out.write(`${JSON.stringify({ url: run.url, pid: run.pid, models }, null, 2)}\n`);
-  else if (models.length === 0) io.out.write(`ortllama on ${run.url} has no models loaded\n`);
+    io.out.write(`${JSON.stringify({ url: run.url, pid: run.pid, models, memory }, null, 2)}\n`);
   else {
-    const rows = [['MODEL', 'VARIANT', 'ENGINE', 'PROVIDERS', 'EXPIRES']];
-    for (const m of models)
-      rows.push([
-        m.id,
-        m.variant,
-        m.engine,
-        m.executionProviders.join(','),
-        m.expiresAt ?? 'never',
-      ]);
-    io.out.write(`${table(rows)}\n`);
+    if (models.length === 0) io.out.write(`ortllama on ${run.url} has no models loaded\n`);
+    else {
+      const rows = [['MODEL', 'VARIANT', 'ENGINE', 'PROVIDERS', 'SIZE', 'EXPIRES']];
+      for (const m of models)
+        rows.push([
+          m.id,
+          m.variant,
+          m.engine,
+          m.executionProviders.join(','),
+          megabytes(m.modelBytes),
+          m.expiresAt ?? 'never',
+        ]);
+      io.out.write(`${table(rows)}\n`);
+    }
+    if (memory) io.out.write(`process rss ${megabytes(memory.rss)}\n`);
   }
   return 0;
 }

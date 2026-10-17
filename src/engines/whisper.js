@@ -58,6 +58,7 @@ async function createSession(backend, files, rel) {
 export const whisper = {
   name: 'whisper',
   capability: 'transcription',
+  providers: { node: ['cpu'] },
   async detect(files) {
     const config = await configOf(files);
     if (!config) return null;
