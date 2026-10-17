@@ -1,13 +1,17 @@
 # slicc-ortllama
 
-A local model server: ONNX models on ONNX Runtime, served over OpenAI-style HTTP APIs. The same code runs in two places:
+[![npm](https://img.shields.io/npm/v/@ai-ecoverse/slicc-ortllama)](https://www.npmjs.com/package/@ai-ecoverse/slicc-ortllama)
+[![CI](https://github.com/ai-ecoverse/slicc-ortllama/actions/workflows/ci.yml/badge.svg)](https://github.com/ai-ecoverse/slicc-ortllama/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/ai-ecoverse/slicc-ortllama)](LICENSE)
 
-- **In the browser**, as a [slicc-kernel](https://github.com/ai-ecoverse/slicc-kernel) program on [jsh](https://github.com/ai-ecoverse/slicc-jsh)'s `node`, on `onnxruntime-web` (WebGPU, single-threaded WASM as the fallback), listening on the kernel's loopback. The page and the slicc-agent worker reach it as `http://<port>.kernel.localhost`.
+A local model server: ONNX models on [ONNX Runtime](https://onnxruntime.ai), served over OpenAI-style HTTP APIs. It does chat with tools, reasoning and images, decisions, transcription (batch and realtime) and text to speech. The same code runs in two places:
+
+- **In the browser**, as a [slicc-kernel](https://github.com/ai-ecoverse/slicc-kernel) program on [slicc-jsh](https://github.com/ai-ecoverse/slicc-jsh)'s `node`, on `onnxruntime-web` (WebGPU, single-threaded WASM as the fallback), listening on the kernel's loopback. The page and the [slicc-agent](https://github.com/ai-ecoverse/slicc-agent) worker reach it as `http://<port>.kernel.localhost`.
 - **On a host**, on Node 24+ with `onnxruntime-node`.
 
-The plan and milestones are in [#2](https://github.com/ai-ecoverse/slicc-ortllama/issues/2).
+Models come only from the Hugging Face cache; ortllama downloads nothing. The plan and milestones are in [#2](https://github.com/ai-ecoverse/slicc-ortllama/issues/2).
 
-## Use
+## Quick start
 
 ```sh
 npm install -g @ai-ecoverse/slicc-ortllama onnxruntime-node @ai-ecoverse/kev.js
@@ -16,12 +20,16 @@ hf download mistralai/Ministral-3-3B-Instruct-2512-ONNX --include '*.json' chat_
 ortllama serve
 ```
 
+Chat:
+
 ```sh
 curl -s localhost:11435/v1/chat/completions -H 'content-type: application/json' -d '{
   "model": "chat",
   "messages": [{ "role": "user", "content": "What is the capital of France?" }]
 }'
 ```
+
+A System One decision:
 
 ```sh
 curl -s localhost:11435/v1/systemone -H 'content-type: application/json' -d '{
@@ -30,19 +38,25 @@ curl -s localhost:11435/v1/systemone -H 'content-type: application/json' -d '{
 }'
 ```
 
+A transcription:
+
 ```sh
 hf download onnx-community/whisper-tiny --include '*.json' 'onnx/encoder_model.onnx' 'onnx/decoder_model_merged.onnx'
 curl -s localhost:11435/v1/audio/transcriptions -F file=@clip.wav -F response_format=verbose_json
 ```
 
-In slicc-kernel, `onnxruntime-node` is not needed: the `slicc` export condition picks `onnxruntime-web`. It needs slicc-jsh 0.31.0 or later: it keeps a program alive while WebGPU work is pending, and it has the `tls` module that `ws`, which serves `/v1/realtime`, loads.
+### In slicc-kernel
+
+`onnxruntime-node` is not needed: the `slicc` export condition picks `onnxruntime-web`. ortllama needs slicc-jsh 0.31.0 or later, which keeps a program alive while WebGPU work is pending and has the `tls` module that `ws`, which serves `/v1/realtime`, loads.
+
+## CLI
 
 | Command | |
 | --- | --- |
 | `ortllama serve [--port N] [--host H] [--detach]` | start the server (default `127.0.0.1:11435`); `--detach` runs it in the background |
 | `ortllama ls [--json]` | models in the Hugging Face cache that ortllama can run |
 | `ortllama ps [--json]` | models the running server has loaded |
-| `ortllama alias [role [model]] [--unset role]` | show or set role aliases |
+| `ortllama alias [role [model]] [--unset role]` | show or set [role aliases](#roles) |
 | `ortllama check <model> [--fixtures file] [--json]` | load a model on this device, time a request, and compare with reference fixtures |
 
 ## APIs
@@ -50,32 +64,73 @@ In slicc-kernel, `onnxruntime-node` is not needed: the `slicc` export condition 
 | Route | |
 | --- | --- |
 | `GET /v1/models` | models and role aliases; System One models list `decisions` in `architecture.output_modalities` |
-| `POST /v1/chat/completions` | OpenAI chat completions, streamed as `chat.completion.chunk`s with `stream: true`, on the decoder engine |
-| `POST /v1/systemone` | TypeSafe's System One protocol, on [kev.js](https://github.com/ai-ecoverse/kev.js) |
-| `POST /v1/audio/transcriptions` | OpenAI's transcription API on Whisper: multipart `file`, `model`, `language`, `prompt`, `response_format` (`json`, `verbose_json`, `text`, `srt`, `vtt`); WAV or 16-bit `audio/pcm` (`;rate=N`, default 24 kHz) |
-| `GET /v1/realtime?intent=transcription` | OpenAI's realtime transcription over WebSocket (subprotocol `realtime`): `session.update`, `input_audio_buffer.append`/`commit`/`clear` in; `session.created`/`updated`, `input_audio_buffer.speech_started`/`speech_stopped`/`committed`/`cleared`, `conversation.item.input_audio_transcription.delta`/`completed` and `error` out. `audio/pcm` at 8–48 kHz (24 kHz by default), `server_vad` on Silero VAD or manual commits (`turn_detection: null`) |
-| `POST /v1/audio/speech` | OpenAI's text to speech, on [Kokoro-82M](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) |
+| `POST /v1/chat/completions` | [OpenAI chat completions](#chat-completions) on the decoder engine |
+| `POST /v1/systemone` | TypeSafe's [System One](#system-one) protocol, on kev.js |
+| `POST /v1/audio/transcriptions` | OpenAI's [transcription](#transcription) API, on Whisper |
+| `GET /v1/realtime?intent=transcription` | OpenAI's [realtime transcription](#realtime-transcription) over WebSocket |
+| `POST /v1/audio/speech` | OpenAI's [text to speech](#speech), on Kokoro-82M |
 | `GET /ortllama/ps` | loaded models |
 
 Errors use OpenAI's envelope, `{ "error": { "message", "type", "param", "code" } }`.
 
-Chat completions take `messages` (`system`, `developer`, `user`, `assistant` with `tool_calls`, `tool`), `tools`, `tool_choice`, `stream`, `stream_options.include_usage`, `max_completion_tokens` or `max_tokens`, `temperature`, `top_p`, `top_k`, `seed`, `stop` and `reasoning_effort`, and ignore `store`. Streams carry `delta.content`, `delta.reasoning_content` and `delta.tool_calls`; the last chunk has `finish_reason` (`stop`, `length` or `tool_calls`) and llama.cpp-style `timings`, followed by a usage chunk when asked. `usage.prompt_tokens_details.cached_tokens` counts the prompt tokens served from the prefix cache, which keeps the attention state of recent conversations, so an agent that resends its history pays only for the new turn. A prompt longer than the context window (the model's, at most 32768 tokens) is refused with `400` and `code: "context_length_exceeded"`, never truncated. A closed connection stops generation.
+### Chat completions
 
-A request without `max_tokens` or `max_completion_tokens` (pi-ai sends neither unless its caller sets one) stops after `ORTLLAMA_MAX_TOKENS` tokens, 8192 by default, and always within the context window, with `finish_reason: "length"`, so a looping model cannot run for minutes. A request that omits `temperature`, `top_p` or `top_k` gets the model's own values: those in its `generation_config.json` if it has them (`do_sample: false` means greedy), otherwise the family's recommendation (Ministral 3 Instruct 0.1; Ministral 3 Reasoning 0.7 with `top_p` 0.95). A value in the request always wins, and `temperature: 0` is greedy. The response and the last stream chunk report what was used in `generation_settings` (`temperature`, `top_p`, `top_k`, `max_tokens`).
+Requests take `messages` (`system`, `developer`, `user`, `assistant` with `tool_calls`, `tool`), `tools`, `tool_choice`, `stream`, `stream_options.include_usage`, `max_completion_tokens` or `max_tokens`, `temperature`, `top_p`, `top_k`, `seed`, `stop` and `reasoning_effort`, and ignore `store`.
 
-User messages may carry images as OpenAI `image_url` parts (`{ "type": "image_url", "image_url": { "url": "data:image/png;base64,…", "detail": "auto" } }`), which is what pi-ai sends for a model with `input: ["text", "image"]`. Images must be inline `data:` URLs of PNG, JPEG or WebP files; ortllama fetches nothing, so `http(s)` URLs are refused with `400`. A request takes at most 8 images of at most 10 MiB and 40 megapixels each; a PNG whose data inflates past the size its header declares is refused before it is decoded, and its compressed side chunks (such as `iCCP`) are skipped. An image too thin for the encoder (an aspect ratio past 1540:1 for Ministral 3, 200:1 for kev.js) answers `400`. They are decoded the same way on both tracks (pure-JS PNG and JPEG, libwebp in WebAssembly), with EXIF orientation applied and transparency dropped as transformers does, and resized as the model's own preprocessing asks: for Ministral 3, Pixtral's, to fit 1540 pixels on the longest edge, or 512 with `"detail": "low"`. The vision encoder loads on the first image. ortllama picks the most precise one the export has, `fp16`, else `fp32`, else the decoder variant's own quantization, because the 4-bit encoders drift far from fp32 (Mistral's q4f16 encoder reaches a per-patch cosine of only 0.16–0.37 against fp16 on ordinary images); among those it prefers one already in the cache, and the `hf download` hint names the most precise. A per-model hint in `config.json` overrides the choice: `{ "hints": { "mistralai/Ministral-3-3B-Instruct-2512-ONNX": { "vision": "q4f16" } } }`. A hinted encoder that is not in the cache leaves the model text-only, so image requests get `400` with the `hf download` command, and the next request after the download loads a new session. `/v1/models` names the encoder in use as `ortllama.vision_encoder`, with `vision_encoder_preferred` when a cached fallback stands in for the preferred one, and `generation_settings` reports the same. The prefix cache keys image tokens on the image's SHA-256, so a conversation that resends the same image reuses it without encoding it again. A model whose vision encoder is not cached lists only `text` in `architecture.input_modalities` and answers images with `400`.
+- **Streaming.** With `stream: true`, the response is a stream of `chat.completion.chunk`s carrying `delta.content`, `delta.reasoning_content` and `delta.tool_calls`. The last chunk has `finish_reason` (`stop`, `length` or `tool_calls`) and llama.cpp-style `timings`, followed by a usage chunk when asked. A closed connection stops generation.
+- **Prefix cache.** The server keeps the attention state of recent conversations, so an agent that resends its history pays only for the new turn. `usage.prompt_tokens_details.cached_tokens` counts the prompt tokens served from it.
+- **Context window.** A prompt longer than the context window (the model's, at most 32768 tokens) is refused with `400` and `code: "context_length_exceeded"`, never truncated.
+- **Token limit.** A request without `max_tokens` or `max_completion_tokens` (pi-ai sends neither unless its caller sets one) stops after `ORTLLAMA_MAX_TOKENS` tokens, 8192 by default, and always within the context window, with `finish_reason: "length"`, so a looping model cannot run for minutes.
+- **Sampling.** A request that omits `temperature`, `top_p` or `top_k` gets the model's own values: those in its `generation_config.json` if it has them (`do_sample: false` means greedy), otherwise the family's recommendation (Ministral 3 Instruct 0.1; Ministral 3 Reasoning 0.7 with `top_p` 0.95). A value in the request always wins, and `temperature: 0` is greedy. The response and the last stream chunk report what was used in `generation_settings` (`temperature`, `top_p`, `top_k`, `max_tokens`).
+- **Reasoning.** The Reasoning model thinks, streamed as `reasoning_content`, when a request brings no system message, because its template's default system prompt asks for a `[THINK]` block. A request with a system message of its own gets no thinking unless it appends the repo's `SYSTEM_PROMPT.txt`. `reasoning_effort: "none"` turns thinking off: it keeps `[THINK]` out, and a request without a system message is rendered with a direct-answer instruction in place of that default prompt.
 
-System One requests to a kev.js vision bundle (such as `ai-ecoverse/kev.js/kev-0.8b-vision`) take an `image` field, a `data:` URL string or `{ "url": … }`, decoded to RGBA for kev.js; text-only bundles answer it with `400`. pi-ai's System One client does not send images yet.
+#### Images
 
-Transcriptions answer `{ text, language, duration, segments, usage: { type: "duration", seconds } }`. Audio longer than 30 seconds is decoded in windows that follow Whisper's timestamps; the language is detected when the request names none. Other audio formats answer `400` for now.
+User messages may carry images as OpenAI `image_url` parts, which is what pi-ai sends for a model with `input: ["text", "image"]`:
 
-A realtime session re-decodes the growing turn about every 500 ms of audio and sends the words two decodes agree on as deltas, then the full transcript when the turn ends: on `silence_duration_ms` of silence (500 ms by default), when no audio has arrived for that long, on `commit`, after 30 seconds of speech, or when the socket closes. `threshold` is kept between 0.2 and 0.95, `prefix_padding_ms` between 0 and 2000 and `silence_duration_ms` between 100 and 10000. `clear` drops transcripts that are still being decoded. A socket that sends nothing for 60 seconds is closed. The WebSocket takes the API key as `Authorization: Bearer` or as the `openai-insecure-api-key.<key>` subprotocol that browsers use, and answers only loopback, `*.localhost` and `ORTLLAMA_ORIGINS` origins. The Whisper model and the one Silero VAD session that all sockets share stay loaded while a session is open, so open realtime sessions can push the number of loaded models past `ORTLLAMA_MAX_LOADED`.
+```json
+{ "type": "image_url", "image_url": { "url": "data:image/png;base64,…", "detail": "auto" } }
+```
 
-`@ai-ecoverse/slicc-ortllama/pi-audio` builds [pi-audio](https://github.com/ai-ecoverse/pi-audio) voice models for ortllama on pi-audio's OpenAI APIs, without loading the server or pi-audio: `transcriptionModel({ baseUrl, id })` returns an `openai-transcriptions` model for `transcribe()`, `realtimeTranscriptionModel({ baseUrl, id })` an `openai-realtime-transcription` model with server VAD for `listen()`, and `speechModel({ baseUrl, id, voices })` an `openai-speech` model for `speak()`. `voiceModels(baseUrl)` returns all three. `baseUrl` defaults to `http://127.0.0.1:11435/v1`.
+- **Input.** Images must be inline `data:` URLs of PNG, JPEG or WebP files; ortllama fetches nothing, so `http(s)` URLs are refused with `400`. A request takes at most 8 images of at most 10 MiB and 40 megapixels each. A PNG whose data inflates past the size its header declares is refused before it is decoded, and its compressed side chunks (such as `iCCP`) are skipped. An image too thin for the encoder (an aspect ratio past 1540:1 for Ministral 3, 200:1 for kev.js) answers `400`.
+- **Decoding.** Images are decoded the same way on both tracks (pure-JS PNG and JPEG, libwebp in WebAssembly), with EXIF orientation applied and transparency dropped as transformers does, and resized as the model's own preprocessing asks: for Ministral 3, Pixtral's, to fit 1540 pixels on the longest edge, or 512 with `"detail": "low"`.
+- **Vision encoder.** It loads on the first image. ortllama picks the most precise one the export has, `fp16`, else `fp32`, else the decoder variant's own quantization, because the 4-bit encoders drift far from fp32 (Mistral's q4f16 encoder reaches a per-patch cosine of only 0.16–0.37 against fp16 on ordinary images). Among those it prefers one already in the cache, and the `hf download` hint names the most precise. A per-model hint in `config.json` overrides the choice: `{ "hints": { "mistralai/Ministral-3-3B-Instruct-2512-ONNX": { "vision": "q4f16" } } }`. A hinted encoder that is not in the cache leaves the model text-only, so image requests get `400` with the `hf download` command, and the next request after the download loads a new session.
+- **Reporting.** `/v1/models` names the encoder in use as `ortllama.vision_encoder`, with `vision_encoder_preferred` when a cached fallback stands in for the preferred one, and `generation_settings` reports the same. A model whose vision encoder is not cached lists only `text` in `architecture.input_modalities` and answers images with `400`.
+- **Caching.** The prefix cache keys image tokens on the image's SHA-256, so a conversation that resends the same image reuses it without encoding it again.
+
+### System One
+
+`POST /v1/systemone` speaks TypeSafe's System One protocol on [kev.js](https://github.com/ai-ecoverse/kev.js). Requests to a kev.js vision bundle (such as `ai-ecoverse/kev.js/kev-0.8b-vision`) take an `image` field, a `data:` URL string or `{ "url": … }`, decoded to RGBA for kev.js; text-only bundles answer it with `400`. pi-ai's System One client does not send images yet.
+
+### Transcription
+
+`POST /v1/audio/transcriptions` takes a multipart `file`, `model`, `language`, `prompt` and `response_format` (`json`, `verbose_json`, `text`, `srt`, `vtt`). Audio is WAV or 16-bit `audio/pcm` (`;rate=N`, default 24 kHz); other formats answer `400` for now.
+
+It answers `{ text, language, duration, segments, usage: { type: "duration", seconds } }`. Audio longer than 30 seconds is decoded in windows that follow Whisper's timestamps; the language is detected when the request names none.
+
+### Realtime transcription
+
+`GET /v1/realtime?intent=transcription` is OpenAI's realtime transcription over WebSocket (subprotocol `realtime`).
+
+| Direction | Events |
+| --- | --- |
+| in | `session.update`, `input_audio_buffer.append`, `input_audio_buffer.commit`, `input_audio_buffer.clear` |
+| out | `session.created`, `session.updated`, `input_audio_buffer.speech_started`, `input_audio_buffer.speech_stopped`, `input_audio_buffer.committed`, `input_audio_buffer.cleared`, `conversation.item.input_audio_transcription.delta`, `conversation.item.input_audio_transcription.completed`, `error` |
+
+Audio is `audio/pcm` at 8–48 kHz (24 kHz by default). Turns are detected by `server_vad` on Silero VAD, or committed manually with `turn_detection: null`.
+
+- **Decoding.** A session re-decodes the growing turn about every 500 ms of audio and sends the words two decodes agree on as deltas, then the full transcript when the turn ends: on `silence_duration_ms` of silence (500 ms by default), when no audio has arrived for that long, on `commit`, after 30 seconds of speech, or when the socket closes. `clear` drops transcripts that are still being decoded.
+- **Limits.** `threshold` is kept between 0.2 and 0.95, `prefix_padding_ms` between 0 and 2000 and `silence_duration_ms` between 100 and 10000. A socket that sends nothing for 60 seconds is closed.
+- **Security.** The WebSocket takes the API key as `Authorization: Bearer` or as the `openai-insecure-api-key.<key>` subprotocol that browsers use, and answers only loopback, `*.localhost` and `ORTLLAMA_ORIGINS` origins.
+- **Memory.** The Whisper model and the one Silero VAD session that all sockets share stay loaded while a session is open, so open realtime sessions can push the number of loaded models past `ORTLLAMA_MAX_LOADED`.
 
 ### Speech
 
-`POST /v1/audio/speech` takes `{ model, input, voice, response_format, speed, instructions }`. `model` defaults to the `speech` role, `voice` to `af_heart`, and `instructions` is accepted and ignored. `response_format` is `wav` (the default) or `pcm`, 24 kHz mono 16-bit little-endian; other formats answer `400`. `input` takes up to 4096 characters; it is split into sentences, long ones at clause marks or spaces, and each piece's audio is sent as soon as it is ready.
+`POST /v1/audio/speech` takes `{ model, input, voice, response_format, speed, instructions }`, on [Kokoro-82M](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX).
+
+- `model` defaults to the `speech` role, `voice` to `af_heart`, and `instructions` is accepted and ignored.
+- `response_format` is `wav` (the default) or `pcm`, 24 kHz mono 16-bit little-endian; other formats answer `400`.
+- `input` takes up to 4096 characters. It is split into sentences, long ones at clause marks or spaces, and each piece's audio is sent as soon as it is ready.
 
 ```sh
 hf download onnx-community/Kokoro-82M-v1.0-ONNX --include config.json tokenizer.json onnx/model.onnx 'voices/*'
@@ -85,16 +140,35 @@ curl -s localhost:11435/v1/audio/speech -H 'content-type: application/json' \
   -d '{ "input": "Hello from the kernel.", "voice": "bf_emma" }' > hello.wav
 ```
 
-Voices are Kokoro's American (`af_*`, `am_*`) and British English (`bf_*`, `bm_*`), Spanish (`e`), French (`f`), Hindi (`h`), Italian (`i`) and Brazilian Portuguese (`p`) voices; Japanese and Chinese are left out, since they have no phonemizer here. Variants are the repo's quantizations (`fp32`, `fp16`, `q8`, `q8f16`, `q4`, `q4f16`, `uint8`, `uint8f16`); `fp32` is the default: it is the fastest on CPU, and `fp16`, though faster on WebGPU, comes out garbled there.
+Voices are Kokoro's American (`af_*`, `am_*`) and British English (`bf_*`, `bm_*`), Spanish (`e`), French (`f`), Hindi (`h`), Italian (`i`) and Brazilian Portuguese (`p`) voices; Japanese and Chinese are left out, since they have no phonemizer here. Variants are the repo's quantizations (`fp32`, `fp16`, `q8`, `q8f16`, `q4`, `q4f16`, `uint8`, `uint8f16`). `fp32` is the default: it is the fastest on CPU, and `fp16`, though faster on WebGPU, comes out garbled there.
 
-Kokoro needs a phonemizer, and ortllama ships none: npm phonemizers are imported at runtime wherever ortllama can find them, the misaki lexicon comes from the Hugging Face cache, and speech answers `501` with `code: "engine_unavailable"`, naming what to install, until one is there. **The recommended setup is misaki plus `phonemize`:** it has no GPL code, and in listening tests it was the best of the combinations. It's not perfect, but usable, and English only. Add `espeak-ng` for the Spanish, French, Hindi, Italian and Portuguese voices. Phonemizers are tried in the table's order, and the first that knows a voice's language speaks it, so English stays with misaki and `phonemize` even when `espeak-ng` is installed; `ORTLLAMA_PHONEMIZERS` (such as `phonemize,espeak-ng`) changes the order or leaves some out. A phonemizer that fails while speaking is skipped for a minute, and the next one speaks. Other heteronyms, such as past-tense `read` or `bass`, take the lexicon's usual reading until there is a part-of-speech tagger.
+#### Phonemizers
+
+Kokoro needs a phonemizer, and ortllama ships none. npm phonemizers are imported at runtime wherever ortllama can find them, the misaki lexicon comes from the Hugging Face cache, and speech answers `501` with `code: "engine_unavailable"`, naming what to install, until one is there.
+
+**The recommended setup is misaki plus `phonemize`:** it has no GPL code, and in listening tests it was the best of the combinations. It's not perfect, but usable, and English only. Add `espeak-ng` for the Spanish, French, Hindi, Italian and Portuguese voices.
 
 | Phonemizer | Get it | Languages | Licence | |
 | --- | --- | --- | --- | --- |
-| `misaki` | `hf download hexgrad/misaki --repo-type dataset` (6–7 MB per accent) | English | Apache-2.0 | the lexicons of [misaki](https://github.com/hexgrad/misaki), the G2P Kokoro was trained with; words it does not know, and verbs whose reading differs from the noun's (`lives`, `record`, `tear`), go with their sentence to the next English phonemizer, and when there is none, numbers, ordinals and symbols are read out and unknown words spelled |
-| `phonemize` | `npm install phonemize` (3 MB) | English | MIT | pure JavaScript rules and lexicon; British vowels are mapped onto American output, so words like `bath` keep the short vowel |
-| `espeak-ng` | `npm install espeak-ng` (18 MB) | all of the above | GPL-3.0-or-later | optional; the only one for Spanish, French, Hindi, Italian and Portuguese |
-| `phonemizer` | `npm install phonemizer` (2.6 MB) | English | labelled Apache-2.0, but bundles espeak-ng (GPL-3.0-or-later) | the same phonemes as `espeak-ng` |
+| [`misaki`](https://github.com/hexgrad/misaki) | `hf download hexgrad/misaki --repo-type dataset` (6–7 MB per accent) | English | Apache-2.0 | the lexicons of the G2P Kokoro was trained with; words it does not know, and verbs whose reading differs from the noun's (`lives`, `record`, `tear`), go with their sentence to the next English phonemizer, and when there is none, numbers, ordinals and symbols are read out and unknown words spelled |
+| [`phonemize`](https://github.com/hans00/phonemize) | `npm install phonemize` (3 MB) | English | MIT | pure JavaScript rules and lexicon; British vowels are mapped onto American output, so words like `bath` keep the short vowel |
+| [`espeak-ng`](https://github.com/ianmarmour/espeak-ng.js) | `npm install espeak-ng` (18 MB) | all of the above | GPL-3.0-or-later | optional; the only one for Spanish, French, Hindi, Italian and Portuguese |
+| [`phonemizer`](https://github.com/xenova/phonemizer.js) | `npm install phonemizer` (2.6 MB) | English | labelled Apache-2.0, but bundles espeak-ng (GPL-3.0-or-later) | the same phonemes as `espeak-ng` |
+
+Phonemizers are tried in the table's order, and the first that knows a voice's language speaks it, so English stays with misaki and `phonemize` even when `espeak-ng` is installed. `ORTLLAMA_PHONEMIZERS` (such as `phonemize,espeak-ng`) changes the order or leaves some out. A phonemizer that fails while speaking is skipped for a minute, and the next one speaks. Other heteronyms, such as past-tense `read` or `bass`, take the lexicon's usual reading until there is a part-of-speech tagger.
+
+### pi-audio
+
+`@ai-ecoverse/slicc-ortllama/pi-audio` builds [pi-audio](https://github.com/ai-ecoverse/pi-audio) voice models for ortllama on pi-audio's OpenAI APIs, without loading the server or pi-audio:
+
+| Function | Returns | For |
+| --- | --- | --- |
+| `transcriptionModel({ baseUrl, id })` | an `openai-transcriptions` model | `transcribe()` |
+| `realtimeTranscriptionModel({ baseUrl, id })` | an `openai-realtime-transcription` model with server VAD | `listen()` |
+| `speechModel({ baseUrl, id, voices })` | an `openai-speech` model | `speak()` |
+| `voiceModels(baseUrl)` | all three | |
+
+`baseUrl` defaults to `http://127.0.0.1:11435/v1`.
 
 ```js
 import { speak } from '@ai-ecoverse/pi-audio';
@@ -109,15 +183,44 @@ for await (const event of speak(model, { text: 'Hello.', voice: 'af_heart' }, { 
 
 ## Models
 
-ortllama downloads nothing. It reads the Hugging Face cache that `hf download` fills (`HF_HUB_CACHE`, else `HF_HOME/hub`, else `~/.cache/huggingface/hub`), through its `refs/` and `snapshots/`. A model ID is a Hub ID: `org/repo[/subfolder][@revision][:variant]`, such as `ai-ecoverse/kev.js/kev-0.8b:q8f32`. A model that isn't cached, or a variant with missing files, is answered with `404` and the `hf download` command that fetches it.
+ortllama downloads nothing. It reads the Hugging Face cache that [`hf download`](https://huggingface.co/docs/huggingface_hub/guides/cli) fills (`HF_HUB_CACHE`, else `HF_HOME/hub`, else `~/.cache/huggingface/hub`), through its `refs/` and `snapshots/`. A model ID is a Hub ID: `org/repo[/subfolder][@revision][:variant]`, such as `ai-ecoverse/kev.js/kev-0.8b:q8f32`. A model that isn't cached, or a variant with missing files, is answered with `404` and the `hf download` command that fetches it.
 
-Clients can ask for a role instead of a model: `chat`, `chat-reasoning`, `decisions`, `transcribe`, `realtime-transcribe`, `speech` or `vad`. `ortllama alias decisions <model>` changes what a role means, so swapping a model changes no client. `chat` defaults to `mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16`, `chat-reasoning` to `ai-ecoverse/Ministral-3-3B-Reasoning-2512-ONNX:q4f16` (Mistral's Reasoning checkpoint in the Instruct export's layout; fetch it with `hf download ai-ecoverse/Ministral-3-3B-Reasoning-2512-ONNX --include '*.json' chat_template.jinja 'onnx/*_q4f16.onnx*' 'onnx/vision_encoder_fp16.onnx*'`), `decisions` to `ai-ecoverse/kev.js/kev-0.8b:q8f32`, `transcribe` and `realtime-transcribe` to `onnx-community/whisper-tiny`, `vad` to `onnx-community/silero-vad` (fetch it with `hf download onnx-community/silero-vad --include onnx/model.onnx`), and `speech` to `onnx-community/Kokoro-82M-v1.0-ONNX`. The Reasoning model thinks, streamed as `reasoning_content`, when a request brings no system message, because its template's default system prompt asks for a `[THINK]` block; a request with a system message of its own gets no thinking unless it appends the repo's `SYSTEM_PROMPT.txt`. `reasoning_effort: "none"` turns thinking off: it keeps `[THINK]` out, and a request without a system message is rendered with a direct-answer instruction in place of that default prompt.
+### Roles
 
-Whisper models are the transformers.js ONNX exports (`config.json` with `model_type: "whisper"`, `onnx/encoder_model*.onnx` and `onnx/decoder_model_merged*.onnx`, external `.onnx_data` included). Variants follow the file suffixes: `fp32`, `fp16`, `q8` (`_quantized`), `int8`, `uint8`, `q4`, `q4f16`, `bnb4`; the default is the first complete one in that order.
+Clients can ask for a role instead of a model. `ortllama alias decisions <model>` changes what a role means, so swapping a model changes no client.
 
-Engines are picked by the files a model has, not by its name. The decoder engine runs the transformers.js layout (`onnx/decoder_model_merged*.onnx` with `embed_tokens*.onnx`, or `onnx/model*.onnx`; variants are its quantizations, such as `q4f16`) and the onnxruntime-genai layout (`genai_config.json`, one variant per folder), with the model's own chat template and, when the export has one, its `vision_encoder*.onnx`. A small profile per family, chosen from the template, parses tool calls and reasoning; Mistral's `[TOOL_CALLS]name[ARGS]{…}` and `[THINK]…[/THINK]` are built in, and control-token names in client text are escaped so they cannot inject one. Each engine in `src/engines/` gets ONNX Runtime from the caller and provides `detect`, `missing`, `include`, `load`, `checkOverrides` and `check`.
+| Role | Default |
+| --- | --- |
+| `chat` | [`mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16`](https://huggingface.co/mistralai/Ministral-3-3B-Instruct-2512-ONNX) |
+| `chat-reasoning` | [`ai-ecoverse/Ministral-3-3B-Reasoning-2512-ONNX:q4f16`](https://huggingface.co/ai-ecoverse/Ministral-3-3B-Reasoning-2512-ONNX), Mistral's Reasoning checkpoint in the Instruct export's layout |
+| `decisions` | [`ai-ecoverse/kev.js/kev-0.8b:q8f32`](https://huggingface.co/ai-ecoverse/kev.js) |
+| `transcribe`, `realtime-transcribe` | [`onnx-community/whisper-tiny`](https://huggingface.co/onnx-community/whisper-tiny) |
+| `vad` | [`onnx-community/silero-vad`](https://huggingface.co/onnx-community/silero-vad) |
+| `speech` | [`onnx-community/Kokoro-82M-v1.0-ONNX`](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) |
 
-Model-specific libraries are never installed with ortllama. They are devDependencies here, and engines load them only when a model needs them, such as `@ai-ecoverse/kev.js` for System One and `espeak-ng`, `phonemize` or `phonemizer` for Kokoro. ortllama looks for each library next to itself, then in `ORTLLAMA_MODULE_PATH` (project folders that contain a `node_modules`), then in pnpm's global installs (`$PNPM_HOME/global/…`, including slicc-kernel's `/usr/local/share/pnpm`). A model whose library is missing is still listed, and requests for it answer `501` with code `engine_unavailable` and the package to install.
+The defaults that the [quick start](#quick-start) and [speech](#speech) examples do not fetch:
+
+```sh
+hf download ai-ecoverse/Ministral-3-3B-Reasoning-2512-ONNX --include '*.json' chat_template.jinja 'onnx/*_q4f16.onnx*' 'onnx/vision_encoder_fp16.onnx*'
+hf download onnx-community/silero-vad --include onnx/model.onnx
+```
+
+### Engines
+
+Engines are picked by the files a model has, not by its name. Each engine in `src/engines/` gets ONNX Runtime from the caller and provides `detect`, `missing`, `include`, `load`, `checkOverrides` and `check`.
+
+- **Decoder.** Runs the transformers.js layout (`onnx/decoder_model_merged*.onnx` with `embed_tokens*.onnx`, or `onnx/model*.onnx`; variants are its quantizations, such as `q4f16`) and the onnxruntime-genai layout (`genai_config.json`, one variant per folder), with the model's own chat template and, when the export has one, its `vision_encoder*.onnx`. A small profile per family, chosen from the template, parses tool calls and reasoning; Mistral's `[TOOL_CALLS]name[ARGS]{…}` and `[THINK]…[/THINK]` are built in, and control-token names in client text are escaped so they cannot inject one.
+- **Whisper.** Runs the transformers.js ONNX exports (`config.json` with `model_type: "whisper"`, `onnx/encoder_model*.onnx` and `onnx/decoder_model_merged*.onnx`, external `.onnx_data` included). Variants follow the file suffixes: `fp32`, `fp16`, `q8` (`_quantized`), `int8`, `uint8`, `q4`, `q4f16`, `bnb4`; the default is the first complete one in that order.
+
+### Model libraries
+
+Model-specific libraries are never installed with ortllama. They are devDependencies here, and engines load them only when a model needs them, such as `@ai-ecoverse/kev.js` for System One and `espeak-ng`, `phonemize` or `phonemizer` for Kokoro. ortllama looks for each library:
+
+1. next to itself,
+2. in `ORTLLAMA_MODULE_PATH` (project folders that contain a `node_modules`),
+3. in pnpm's global installs (`$PNPM_HOME/global/…`, including slicc-kernel's `/usr/local/share/pnpm`).
+
+A model whose library is missing is still listed, and requests for it answer `501` with code `engine_unavailable` and the package to install.
 
 ## Configuration
 
@@ -139,4 +242,53 @@ Model-specific libraries are never installed with ortllama. They are devDependen
 
 ## Develop
 
-Node ≥ 24. `npm run lint` runs `slicc-lint`. `npm test` runs the integration tests; the Kev, Whisper, realtime, chat, reasoning, image and Kokoro tests run when `ai-ecoverse/kev.js/kev-0.8b`, `onnx-community/whisper-tiny`, `onnx-community/silero-vad`, `mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16` (with its vision encoder), `ai-ecoverse/Ministral-3-3B-Reasoning-2512-ONNX:q4f16`, `ai-ecoverse/kev.js/kev-0.8b-vision` and `onnx-community/Kokoro-82M-v1.0-ONNX` are in the Hugging Face cache (`ORTLLAMA_REQUIRE_MODEL=1` makes a missing model a failure). Unit tests stay local in `test/unit/` (`npm run test:unit`). Releases use semantic-release on `main`.
+Node ≥ 24.
+
+| Command | |
+| --- | --- |
+| `npm run lint` | `slicc-lint`, from [slicc-shared-web](https://github.com/ai-ecoverse/slicc-shared-web) |
+| `npm test` | integration tests in `test/integration/` |
+| `npm run test:unit` | unit tests, which stay local in `test/unit/` |
+
+Each integration test runs when its models are in the Hugging Face cache; `ORTLLAMA_REQUIRE_MODEL=1` makes a missing model a failure.
+
+| Tests | Models |
+| --- | --- |
+| Kev | `ai-ecoverse/kev.js/kev-0.8b` |
+| Whisper | `onnx-community/whisper-tiny` |
+| Realtime | `onnx-community/whisper-tiny`, `onnx-community/silero-vad` |
+| Chat | `mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16` |
+| Reasoning | `ai-ecoverse/Ministral-3-3B-Reasoning-2512-ONNX:q4f16` |
+| Images | `mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16` with its vision encoder, `ai-ecoverse/kev.js/kev-0.8b-vision` |
+| Kokoro | `onnx-community/Kokoro-82M-v1.0-ONNX` |
+
+Releases are published to npm from `main` by [semantic-release](https://semantic-release.gitbook.io), so commit messages follow [Conventional Commits](https://www.conventionalcommits.org).
+
+## Related projects
+
+### In ai-ecoverse
+
+- [slicc](https://github.com/ai-ecoverse/slicc): the browser-native AI agent ortllama serves models to.
+- [slicc-kernel](https://github.com/ai-ecoverse/slicc-kernel): the wasm process kernel ortllama runs in, in the browser.
+- [slicc-jsh](https://github.com/ai-ecoverse/slicc-jsh): the kernel's `node` shim that runs ortllama there.
+- [slicc-agent](https://github.com/ai-ecoverse/slicc-agent): the agent core that talks to ortllama from its worker.
+- [pi-audio](https://github.com/ai-ecoverse/pi-audio): voice bindings for pi that `@ai-ecoverse/slicc-ortllama/pi-audio` builds models for.
+- [kev.js](https://github.com/ai-ecoverse/kev.js): Kev decision models on onnxruntime-web, behind `/v1/systemone`.
+- [models](https://github.com/ai-ecoverse/models): conversion recipes for the ONNX models ai-ecoverse publishes on [Hugging Face](https://huggingface.co/ai-ecoverse), including the Ministral 3 Reasoning export.
+- [jev-omni.js](https://github.com/ai-ecoverse/jev-omni.js) and [cua-s1.js](https://github.com/ai-ecoverse/cua-s1.js): more decision models in the browser on onnxruntime-web, compared with Kev in [decision-vision-bench](https://github.com/ai-ecoverse/decision-vision-bench).
+- [slicc-shared-web](https://github.com/ai-ecoverse/slicc-shared-web): the shared lint, Renovate and CI configuration this repo uses.
+
+### Elsewhere
+
+- [ONNX Runtime](https://github.com/microsoft/onnxruntime): `onnxruntime-web` and `onnxruntime-node`, the runtimes ortllama injects into its engines.
+- [Ollama](https://github.com/ollama/ollama) and [llama.cpp](https://github.com/ggml-org/llama.cpp): the local model servers ortllama's name, port and `timings` take after; ortllama serves only OpenAI-style APIs.
+- [pi](https://github.com/earendil-works/pi): pi-ai is the reference client for ortllama's chat completions.
+- [transformers.js](https://github.com/huggingface/transformers.js): the ONNX export layout the decoder and Whisper engines read, and the preprocessing they match.
+- [huggingface.js](https://github.com/huggingface/huggingface.js) and [tokenizers.js](https://github.com/huggingface/tokenizers.js): chat templates and tokenizers.
+- [Kev](https://github.com/jaredpalmer/kev): the decision models kev.js runs.
+- [Ministral 3](https://huggingface.co/collections/mistralai/ministral-3), [Whisper](https://github.com/openai/whisper), [Silero VAD](https://github.com/snakers4/silero-vad) and [Kokoro](https://github.com/hexgrad/kokoro): the default models.
+- [jSquash](https://github.com/jamsinclair/jSquash): libwebp in WebAssembly for WebP images.
+
+## License
+
+[Apache-2.0](LICENSE)
