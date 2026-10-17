@@ -15,6 +15,7 @@ export function heldReads(files, budget = HELD_BYTES) {
     if (data) held.delete(rel);
     else {
       data = files.readSync(rel);
+      if (data.length > budget) return data.subarray(offset, offset + length);
       bytes += data.length;
       for (const [name, old] of held) {
         if (bytes <= budget) break;

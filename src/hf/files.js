@@ -43,9 +43,10 @@ export function modelFiles(root, { allow = [root] } = {}) {
         return dir;
       }
     });
+    const lexical = inside(root, rel);
     let path;
     try {
-      path = realpathSync(inside(root, rel));
+      path = realpathSync(lexical);
     } catch {
       throw missing(rel);
     }
