@@ -154,14 +154,26 @@ export function resample(samples, from, to, zeros = 16) {
   return out;
 }
 
+export function concat(parts, Type = Uint8Array) {
+  const out = new Type(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+}
+
 export function createResampler(from, to, zeros = 16) {
-  if (from === to) return (samples) => samples;
+  if (from === to) return Object.assign((samples) => samples, { end: () => new Float32Array(0) });
   const filter = filterOf(from, to, zeros);
   let buffer = new Float32Array(0);
   let base = 0;
   let next = 0;
+  let taken = 0;
   const get = (k) => (k >= base && k < base + buffer.length ? buffer[k - base] : 0);
-  return (samples) => {
+  const push = (samples) => {
+    taken += samples.length;
     const joined = new Float32Array(buffer.length + samples.length);
     joined.set(buffer);
     joined.set(samples, buffer.length);
@@ -174,6 +186,11 @@ export function createResampler(from, to, zeros = 16) {
     base = keep;
     return Float32Array.from(out);
   };
+  push.end = () => {
+    const want = Math.floor((taken * to) / from) - next;
+    return push(new Float32Array(filter.half + 1)).subarray(0, Math.max(0, want));
+  };
+  return push;
 }
 
 export function audioParams(contentType = '') {
@@ -191,7 +208,7 @@ export function audioParams(contentType = '') {
 }
 
 const WAV_TYPES = new Set(['audio/wav', 'audio/wave', 'audio/x-wav', 'audio/vnd.wave']);
-const PCM_TYPES = new Set(['audio/pcm', 'audio/l16', 'audio/raw']);
+export const PCM_TYPES = new Set(['audio/pcm', 'audio/l16', 'audio/raw']);
 
 export function decodeAudio(bytes, contentType = '') {
   const { type, params } = audioParams(contentType);

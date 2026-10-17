@@ -4,7 +4,11 @@ import { decodeWav, resample } from '../../src/audio/pcm.js';
 export const FOX = /the quick brown fox jumps? over the lazy dog/;
 
 export async function foxWav() {
-  return new Uint8Array(await readFile(new URL('fixtures/fox.wav', import.meta.url)));
+  return fixture('wav');
+}
+
+export async function fixture(ext) {
+  return new Uint8Array(await readFile(new URL(`fixtures/fox.${ext}`, import.meta.url)));
 }
 
 export function pcm24(wav, { before = 0, after = 0, endOnSpeech = false } = {}) {
