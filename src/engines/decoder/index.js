@@ -1,4 +1,5 @@
 import { Tokenizer } from '@huggingface/tokenizers';
+import { missingExternal } from '../external.js';
 import { createChat } from './chat.js';
 import {
   detectLayout,
@@ -79,13 +80,20 @@ export const decoder = {
   async missing(files, info, variant) {
     const out = [];
     for (const rel of neededFiles(info, variant)) if (!(await files.exists(rel))) out.push(rel);
+    const { decoder: graph, embed } = info.parts[variant];
+    for (const rel of await missingExternal(files, [graph.model, ...(embed ? [embed.model] : [])]))
+      if (!out.includes(rel)) out.push(rel);
     return out;
   },
   include: (info, variant) => includePatterns(info, variant),
   async specialize(files, info, variant) {
     const picked = await pickVision(files, info, variant);
     if (!picked) return { info: { ...info, vision: null } };
-    const preferred = visionTarget(info, variant).dtype;
+    const target = visionTarget(info, variant);
+    const preferred = target.dtype;
+    const visionExtra = (await missingExternal(files, [target.model])).filter(
+      (rel) => !rel.startsWith(target.model)
+    );
     const dtype = picked.cached ? picked.part.dtype : 'missing';
     const report = {
       vision_encoder: dtype,
@@ -97,6 +105,7 @@ export const decoder = {
         vision: picked.cached ? picked.part : null,
         inputModalities: picked.cached ? ['text', 'image'] : ['text'],
         report,
+        visionExtra,
       },
       key: `vision=${dtype}`,
       details: report,

@@ -17,7 +17,7 @@ function missing(rel) {
   return Object.assign(new Error(`${rel} is not in the model directory`), { code: 'ENOENT' });
 }
 
-function glob(pattern) {
+export function glob(pattern) {
   const parts = pattern.split('*').map((p) => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&'));
   return new RegExp(`^${parts.join('.*')}$`);
 }
@@ -65,6 +65,10 @@ export function modelFiles(root, { allow = [root] } = {}) {
     },
     async size(rel) {
       return (await stat(await real(rel))).size;
+    },
+    async stat(rel) {
+      const { size, mtimeMs } = await stat(await real(rel));
+      return { size, mtimeMs };
     },
     async read(rel) {
       return new Uint8Array(await readFile(await real(rel)));
