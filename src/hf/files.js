@@ -1,3 +1,4 @@
+import { readFileSync, realpathSync } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { join, normalize, posix, sep } from 'node:path';
 import { isDir, listDir } from './cache.js';
@@ -23,6 +24,7 @@ function glob(pattern) {
 
 export function modelFiles(root, { allow = [root] } = {}) {
   let roots;
+  let rootsSync;
   const allowed = async (path) => {
     roots ??= Promise.all(allow.map((dir) => realpath(dir).catch(() => dir)));
     const real = await realpath(path);
@@ -31,6 +33,24 @@ export function modelFiles(root, { allow = [root] } = {}) {
   const real = async (rel) => {
     const path = await allowed(inside(root, rel)).catch(() => null);
     if (!path) throw missing(rel);
+    return path;
+  };
+  const realSync = (rel) => {
+    rootsSync ??= allow.map((dir) => {
+      try {
+        return realpathSync(dir);
+      } catch {
+        return dir;
+      }
+    });
+    const lexical = inside(root, rel);
+    let path;
+    try {
+      path = realpathSync(lexical);
+    } catch {
+      throw missing(rel);
+    }
+    if (!rootsSync.some((dir) => within(dir, path))) throw missing(rel);
     return path;
   };
   const files = {
@@ -48,6 +68,10 @@ export function modelFiles(root, { allow = [root] } = {}) {
     },
     async read(rel) {
       return new Uint8Array(await readFile(await real(rel)));
+    },
+    readSync(rel) {
+      const data = readFileSync(realSync(rel));
+      return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
     },
     text: async (rel) => readFile(await real(rel), 'utf8'),
     async json(rel) {
