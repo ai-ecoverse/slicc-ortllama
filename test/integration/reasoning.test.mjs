@@ -124,6 +124,28 @@ describe('chat completions on Ministral 3 Reasoning through pi-ai', { skip }, ()
     );
   });
 
+  test('at its default sampling, answers the weather question with a tool call or at least stops', async () => {
+    const { message } = await run(
+      {
+        tools: [weather],
+        messages: [
+          {
+            role: 'user',
+            content: 'What is the weather in Paris right now?',
+            timestamp: Date.now(),
+          },
+        ],
+      },
+      { temperature: undefined }
+    );
+    assert.ok(
+      ['toolUse', 'stop'].includes(message.stopReason),
+      `${message.stopReason} ${message.errorMessage ?? ''}`
+    );
+    const call = message.content.find((b) => b.type === 'toolCall');
+    if (call) assert.match(call.arguments.city, /Paris/);
+  });
+
   test('answers without reasoning when reasoning_effort is none', async () => {
     const response = await fetch(`${server.url}/v1/chat/completions`, {
       method: 'POST',

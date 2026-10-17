@@ -98,6 +98,20 @@ async function sibling(files, external, has, name, variant, dtype) {
   return part(files, external, 'onnx/', `${name}${DTYPES[own]}.onnx`);
 }
 
+export const VISION_ORDER = ['fp16', 'fp32'];
+
+async function visionParts(files, external, has, variant, dtypes) {
+  const order = [
+    ...new Set([...VISION_ORDER, variant, dtypeOr(dtypes?.vision_encoder), ...Object.keys(DTYPES)]),
+  ];
+  const out = [];
+  for (const dtype of order) {
+    const name = `vision_encoder${DTYPES[dtype]}.onnx`;
+    if (await has(name)) out.push({ dtype, ...(await part(files, external, 'onnx/', name)) });
+  }
+  return out;
+}
+
 async function onnxParts({ files, external, has, stem, variants, dtypes }) {
   const parts = {};
   for (const variant of variants) {
@@ -114,16 +128,11 @@ async function onnxParts({ files, external, has, stem, variants, dtypes }) {
       variant,
       dtypes?.embed_tokens
     );
-    const vision = await sibling(
-      files,
-      external,
-      has,
-      'vision_encoder',
-      variant,
-      dtypes?.vision_encoder
-    );
-    const known = await has(vision.model.slice('onnx/'.length));
-    parts[variant] = { decoder, embed, ...(known ? { vision } : {}) };
+    parts[variant] = {
+      decoder,
+      embed,
+      visions: await visionParts(files, external, has, variant, dtypes),
+    };
   }
   return parts;
 }
@@ -199,7 +208,12 @@ async function genaiLayout(files) {
     ),
     tokenizerDir: await tokenizerDir(files, dirs),
     template,
-    generation: { temperature: search.temperature, top_p: search.top_p, top_k: search.top_k },
+    generation: {
+      do_sample: search.do_sample,
+      temperature: search.temperature,
+      top_p: search.top_p,
+      top_k: search.top_k,
+    },
     eos: [first.genai.model.eos_token_id].flat().filter(Number.isInteger),
   };
 }
@@ -222,8 +236,32 @@ export function neededFiles(info, variant) {
   ];
 }
 
+export function visionTarget(info, variant) {
+  const list = info.parts[variant]?.visions ?? [];
+  return list.find((v) => v.dtype === info.hint?.vision) ?? list[0] ?? null;
+}
+
+async function cached(files, vision) {
+  for (const rel of ['preprocessor_config.json', vision.model, ...vision.data])
+    if (!(await files.exists(rel))) return false;
+  return true;
+}
+
+export async function pickVision(files, info, variant) {
+  const list = info.parts[variant]?.visions ?? [];
+  const hinted = list.find((v) => v.dtype === info.hint?.vision);
+  if (hinted) return { part: hinted, cached: await cached(files, hinted) };
+  for (const vision of list) if (await cached(files, vision)) return { part: vision, cached: true };
+  return list[0] ? { part: list[0], cached: false } : null;
+}
+
+export async function hasVision(files, info, variant) {
+  return (await pickVision(files, info, variant))?.cached ?? false;
+}
+
 export function includePatterns(info, variant) {
   const p = info.parts[variant];
+  const vision = visionTarget(info, variant);
   const meta = [...TOKENIZER, 'chat_template.jinja'].map((f) => `${info.tokenizerDir}${f}`);
   if (info.layout === 'genai') return [...new Set([`${p.dir}*`, ...meta])];
   return [
@@ -232,16 +270,6 @@ export function includePatterns(info, variant) {
     ...meta,
     `${p.decoder.model}*`,
     ...(p.embed ? [`${p.embed.model}*`] : []),
-    ...(p.vision
-      ? ['preprocessor_config.json', 'processor_config.json', `${p.vision.model}*`]
-      : []),
+    ...(vision ? ['preprocessor_config.json', 'processor_config.json', `${vision.model}*`] : []),
   ];
-}
-
-export async function hasVision(files, info, variant) {
-  const vision = info.parts[variant]?.vision;
-  if (!vision) return false;
-  for (const rel of ['preprocessor_config.json', vision.model, ...vision.data])
-    if (!(await files.exists(rel))) return false;
-  return true;
 }

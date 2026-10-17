@@ -23,7 +23,7 @@ function modelEntry(m, aliasOf = null) {
   };
 }
 
-export function createRoutes({ catalog, runtime, version }) {
+export function createRoutes({ catalog, runtime, version, maxTokens }) {
   return {
     'GET /': { public: true, handle: () => ({ body: `ortllama ${version} is running` }) },
     'GET /v1/models': {
@@ -39,7 +39,7 @@ export function createRoutes({ catalog, runtime, version }) {
       },
     },
     'GET /ortllama/ps': { handle: () => ({ models: runtime.ps() }) },
-    'POST /v1/chat/completions': chatRoute({ catalog, runtime }),
+    'POST /v1/chat/completions': chatRoute({ catalog, runtime, maxTokens }),
     'POST /v1/systemone': {
       async handle({ body, signal }) {
         if (typeof body !== 'object' || body === null || Array.isArray(body))

@@ -129,4 +129,29 @@ describe('chat completions on Ministral 3 through pi-ai', { skip }, () => {
     assert.equal(error.code, 'context_length_exceeded');
     assert.match(error.message, /exceeds the context window/);
   });
+
+  test('stops a request without a limit at ORTLLAMA_MAX_TOKENS', async () => {
+    const capped = await startServer({
+      env: { ...process.env, ORTLLAMA_API_KEY: '', ORTLLAMA_MAX_TOKENS: '12' },
+      port: 0,
+      runtime: server.runtime,
+    });
+    try {
+      const response = await fetch(`${capped.url}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: MODEL,
+          messages: [{ role: 'user', content: 'Count from 1 to 300, separated by commas.' }],
+        }),
+      });
+      const body = await response.json();
+      assert.equal(body.choices[0].finish_reason, 'length', JSON.stringify(body));
+      assert.equal(body.usage.completion_tokens, 12);
+      assert.equal(body.generation_settings.max_tokens, 12);
+      assert.equal(body.generation_settings.temperature, 0.1);
+    } finally {
+      await new Promise((resolve) => capped.server.close(resolve));
+    }
+  });
 });

@@ -43,6 +43,25 @@ function summary(ids, run, times, vision) {
   };
 }
 
+function samplingFor(request, defaults, banned) {
+  return {
+    temperature: request.temperature ?? defaults.temperature ?? 1,
+    topP: request.topP ?? defaults.topP ?? 1,
+    topK: request.topK ?? defaults.topK ?? 0,
+    rng: createRng(request.seed),
+    banned,
+  };
+}
+
+function settingsOf(sampling, budget) {
+  return {
+    temperature: sampling.temperature,
+    top_p: sampling.topP,
+    top_k: sampling.topK,
+    max_tokens: budget,
+  };
+}
+
 export function createChat({
   model,
   tokenizer,
@@ -191,13 +210,7 @@ export function createChat({
       request.maxTokens ?? Number.POSITIVE_INFINITY,
       contextLength - ids.length
     );
-    const sampling = {
-      temperature: request.temperature ?? defaults.temperature ?? 1,
-      topP: request.topP ?? defaults.topP ?? 1,
-      topK: request.topK ?? defaults.topK ?? 0,
-      rng: createRng(request.seed),
-      banned,
-    };
+    const sampling = samplingFor(request, defaults, banned);
     if (signal?.aborted) throw signal.reason;
     emit({ type: 'start', promptTokens: ids.length });
     const out = output(request, emit);
@@ -223,7 +236,11 @@ export function createChat({
     }
     times.end = now();
     if (out.toolCalls > 0 && finish === 'stop' && !out.stopped) finish = 'tool_calls';
-    return { finishReason: finish, ...summary(ids, run, times, run.vision) };
+    return {
+      finishReason: finish,
+      ...summary(ids, run, times, run.vision),
+      settings: settingsOf(sampling, budget),
+    };
   }
 
   return { chat, render, cache };

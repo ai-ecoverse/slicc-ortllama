@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { loadBackend } from '#ort';
 import { createCatalog, localRoots } from './catalog.js';
+import { DEFAULT_MAX_TOKENS } from './chat.js';
 import { listenPort, ortllamaHome, parseDuration, readConfig } from './config.js';
 import { hubCache } from './hf/cache.js';
 import { createServer } from './http/server.js';
@@ -65,7 +66,12 @@ export async function startServer({
 } = {}) {
   const cat = catalog ?? (await openCatalog({ env, ...rest }));
   const rt = runtime ?? createRuntime({ env, ...rest });
-  const routes = createRoutes({ catalog: cat, runtime: rt, version: VERSION });
+  const routes = createRoutes({
+    catalog: cat,
+    runtime: rt,
+    version: VERSION,
+    maxTokens: positive(env.ORTLLAMA_MAX_TOKENS, DEFAULT_MAX_TOKENS),
+  });
   const origins = (env.ORTLLAMA_ORIGINS ?? '').split(',').filter(Boolean);
   const options = { apiKey: apiKey ?? env.ORTLLAMA_API_KEY, origins, hosts: hostsFor(host, env) };
   const server = createServer(routes, options);

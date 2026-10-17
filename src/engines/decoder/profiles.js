@@ -112,6 +112,8 @@ export const mistral = {
   markers: { toolCall: '[TOOL_CALLS]', args: '[ARGS]', think: '[THINK]', thinkEnd: '[/THINK]' },
   tools: true,
   matches: (template) => template.includes('[TOOL_CALLS]') && template.includes('[INST]'),
+  sampling: (template) =>
+    template.includes('[THINK]') ? { temperature: 0.7, topP: 0.95 } : { temperature: 0.1 },
   template: (source) => source.replace(ALTERNATION, ''),
   tokenizer(json) {
     const first =
@@ -130,6 +132,7 @@ export const plain = {
   markers: {},
   tools: false,
   matches: () => true,
+  sampling: () => ({}),
   template: (source) => source,
   tokenizer: (json) => json,
   messages: chatMessages,

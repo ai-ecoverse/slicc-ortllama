@@ -1,11 +1,18 @@
 import { Tokenizer } from '@huggingface/tokenizers';
 import { createChat } from './chat.js';
-import { detectLayout, hasVision, includePatterns, neededFiles } from './layout.js';
+import { detectLayout, hasVision, includePatterns, neededFiles, pickVision } from './layout.js';
 import { pixtralConfig } from './pixtral.js';
 import { pickProfile } from './profiles.js';
 import { openModel } from './session.js';
 
-const DEFAULT_TEMPERATURE = { mistral: 0.15 };
+export function samplingDefaults(generation, family) {
+  const g = generation ?? {};
+  return {
+    temperature: g.do_sample === false ? 0 : (g.temperature ?? family.temperature),
+    topP: g.top_p ?? family.topP,
+    topK: g.top_k ?? family.topK,
+  };
+}
 
 function tokenName(value) {
   return typeof value === 'string' ? value : (value?.content ?? '');
@@ -75,15 +82,14 @@ export const decoder = {
     const template = await templateSource(files, info);
     const profile = pickProfile(template, overrides.profile);
     const tokenizer = new Tokenizer(profile.tokenizer(tokenizerJson), tokenizerConfig);
-    const image = await hasVision(files, info, variant);
-    const part = info.parts[variant];
+    const picked = await pickVision(files, info, variant);
+    const image = picked?.cached ?? false;
     const model = await openModel({
       backend,
       files,
-      part: image ? part : { ...part, vision: null },
+      part: { ...info.parts[variant], vision: image ? picked.part : null },
       shape: await shapeOf(files, info, variant),
     });
-    const g = info.generation ?? {};
     const chat = createChat({
       model,
       tokenizer,
@@ -94,11 +100,7 @@ export const decoder = {
       profile,
       contextLength: overrides.contextLength ?? info.contextLength,
       eos: info.eos,
-      defaults: {
-        temperature: g.temperature ?? DEFAULT_TEMPERATURE[profile.name],
-        topP: g.top_p,
-        topK: g.top_k,
-      },
+      defaults: samplingDefaults(info.generation, profile.sampling(template)),
       prefill: overrides.prefill,
       vision: image ? await visionOf(files, tokenizer, model) : null,
     });

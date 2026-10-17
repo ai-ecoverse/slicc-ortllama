@@ -105,7 +105,8 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
     subfolder,
     requestedRevision = null,
   }) {
-    const { engine, info } = found;
+    const { engine } = found;
+    const info = { ...found.info, hint: hints[id] ?? {} };
     const chosen = variant ?? hints[id]?.variant ?? info.defaultVariant;
     if (!info.variants.includes(chosen)) {
       throw notFound(
@@ -114,10 +115,14 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
       );
     }
     const missing = await engine.missing(files, info, chosen);
+    const download = repo
+      ? downloadHint(repo, {
+          revision: requestedRevision,
+          include: prefixed(subfolder, engine.include(info, chosen)),
+        })
+      : null;
     if (missing.length > 0) {
-      const hint = repo
-        ? `; run: ${downloadHint(repo, { revision: requestedRevision, include: prefixed(subfolder, engine.include(info, chosen)) })}`
-        : '';
+      const hint = download ? `; run: ${download}` : '';
       throw notFound(
         `model ${id}:${chosen} is missing ${missing.length} file(s), such as ${missing[0]}${hint}`,
         'model_incomplete'
@@ -130,6 +135,7 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
       engine,
       info,
       files,
+      download,
       key: `${id}:${chosen}@${revision ?? 'local'}`,
     };
   }
