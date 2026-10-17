@@ -97,6 +97,12 @@ describe('Kokoro speech through pi-audio', { skip }, () => {
   });
 
   test('streams each sentence as it is ready', async () => {
+    const warm = await fetch(`${server.url}/v1/audio/speech`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ input: 'Hi.', voice: 'am_michael', response_format: 'pcm' }),
+    });
+    await warm.arrayBuffer();
     const started = performance.now();
     const response = await fetch(`${server.url}/v1/audio/speech`, {
       method: 'POST',
