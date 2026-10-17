@@ -39,7 +39,7 @@ export function createScore({
         run.seq.push(token);
       }
     } finally {
-      cache.put(run.seq, run.past);
+      if (run.past) cache.put(run.seq, run.past);
     }
     return steps;
   };

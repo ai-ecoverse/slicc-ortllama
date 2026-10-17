@@ -71,6 +71,11 @@ function laced(data, lacing) {
   return frames;
 }
 
+function signed(bytes) {
+  const value = uint(bytes);
+  return bytes.length > 0 && bytes[0] & 0x80 ? value - 2 ** (8 * bytes.length) : value;
+}
+
 function audioTrack(entries) {
   return entries.find((e) => e.codec?.startsWith('A_') && e.number !== undefined) ?? null;
 }
@@ -80,6 +85,7 @@ export function webmAudio(bytes) {
   const entries = [];
   let track = null;
   const packets = [];
+  let padding = 0;
   for (let at = 0; at < bytes.length; ) {
     const id = vint(bytes, at, true);
     const size = vint(bytes, at + id.length);
@@ -95,6 +101,7 @@ export function webmAudio(bytes) {
     if (id.value === 0xd7) entry.number = uint(data);
     else if (id.value === 0x86) entry.codec = decoder.decode(data);
     else if (id.value === 0x63a2) entry.head = data;
+    else if (id.value === 0x75a2) padding += Math.round((signed(data) * 48000) / 1e9);
     if (id.value === 0xa3 || id.value === 0xa1) {
       track ??= audioTrack(entries);
       const number = vint(data, 0);
@@ -107,5 +114,5 @@ export function webmAudio(bytes) {
   }
   track ??= audioTrack(entries);
   if (!track) throw new AudioFormatError('the WebM file has no audio track');
-  return { codec: track.codec, head: track.head, packets };
+  return { codec: track.codec, head: track.head, packets, padding };
 }

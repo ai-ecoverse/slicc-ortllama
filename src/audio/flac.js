@@ -4,6 +4,7 @@ const RATES = [0, 88200, 176400, 192000, 8000, 16000, 22050, 24000, 32000, 44100
 const SIZES = [0, 8, 12, 0, 16, 20, 24, 32];
 const FIXED = [[], [1], [2, -1], [3, -3, 1], [4, -6, 4, -1]];
 const BLOCK = 4096;
+const MAX_RATE = 192000;
 
 const crcTable = (poly, bits) =>
   new Uint16Array(256).map((_, i) => {
@@ -159,12 +160,17 @@ function blockSize(r, code) {
   throw corrupt();
 }
 
+function checked(rate) {
+  if (rate < 1 || rate > MAX_RATE) throw corrupt();
+  return rate;
+}
+
 function frameRate(r, code, info) {
   if (code === 0) return info.rate;
   if (code < 12) return RATES[code];
-  if (code === 12) return r.read(8) * 1000;
-  if (code === 13) return r.read(16);
-  if (code === 14) return r.read(16) * 10;
+  if (code === 12) return checked(r.read(8) * 1000);
+  if (code === 13) return checked(r.read(16));
+  if (code === 14) return checked(r.read(16) * 10);
   throw corrupt();
 }
 
@@ -220,7 +226,7 @@ export function* decodeFlac(bytes) {
     const size = (bytes[at + 1] << 16) | (bytes[at + 2] << 8) | bytes[at + 3];
     if ((bytes[at] & 0x7f) === 0) {
       const r = new Reader(bytes, at + 14);
-      info = { rate: r.read(20), bits: (r.read(8) & 0x1f) + 1 };
+      info = { rate: checked(r.read(20)), bits: (r.read(8) & 0x1f) + 1 };
     }
     at += 4 + size;
   }
