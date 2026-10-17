@@ -33,14 +33,39 @@ export function heldReads(files, budget = HELD_BYTES) {
   return { read, clear };
 }
 
-async function manifestOf(files) {
+export function localWeights(backend, files) {
+  if (backend.track === 'node')
+    return { options: { filePath: (rel) => files.path(rel) }, clear() {} };
+  const reads = heldReads(files);
+  return { options: { readSync: reads.read }, clear: reads.clear };
+}
+
+async function manifestOf(files, accept) {
   if (!(await files.exists('manifest.json'))) return null;
   try {
     const manifest = await files.json('manifest.json');
-    return manifest?.variants && manifest.special && manifest.files ? manifest : null;
+    return manifest?.variants && manifest.files && accept(manifest) ? manifest : null;
   } catch {
     return null;
   }
+}
+
+export async function detectBundle(files, accept) {
+  const manifest = await manifestOf(files, accept);
+  if (!manifest) return null;
+  const variants = [];
+  for (const [variant, part] of Object.entries(manifest.variants))
+    if (await files.exists(part.model)) variants.push(variant);
+  if (variants.length === 0) return null;
+  const defaultVariant = variants.includes('q8f32') ? 'q8f32' : variants[0];
+  return {
+    variants,
+    defaultVariant,
+    inputModalities: manifest.vision ? ['text', 'image'] : ['text'],
+    outputModalities: ['decisions'],
+    contextLength: manifest.variants[defaultVariant].max_positions ?? null,
+    manifest,
+  };
 }
 
 function weights(part) {
@@ -64,23 +89,7 @@ function folder(part) {
 export const systemone = {
   name: 'systemone',
   capability: 'systemone',
-  async detect(files) {
-    const manifest = await manifestOf(files);
-    if (!manifest) return null;
-    const variants = [];
-    for (const [variant, part] of Object.entries(manifest.variants))
-      if (await files.exists(part.model)) variants.push(variant);
-    if (variants.length === 0) return null;
-    const defaultVariant = variants.includes('q8f32') ? 'q8f32' : variants[0];
-    return {
-      variants,
-      defaultVariant,
-      inputModalities: manifest.vision ? ['text', 'image'] : ['text'],
-      outputModalities: ['decisions'],
-      contextLength: manifest.variants[defaultVariant].max_positions ?? null,
-      manifest,
-    };
-  },
+  detect: (files) => detectBundle(files, (manifest) => manifest.special),
   async missing(files, info, variant) {
     const out = [];
     for (const rel of needed(info.manifest, variant)) if (!(await files.exists(rel))) out.push(rel);
@@ -97,17 +106,16 @@ export const systemone = {
   },
   async load({ backend, files, variant, overrides = {}, library = () => optional(KEV) }) {
     const { loadKev, ValidationError, ContextOverflow } = await library();
-    const node = backend.track === 'node';
-    const reads = node ? null : heldReads(files);
+    const weights = localWeights(backend, files);
     const kev = await loadKev((rel) => files.read(rel), {
-      ...(node ? { filePath: (rel) => files.path(rel) } : { readSync: reads.read }),
+      ...weights.options,
       ort: backend.ort,
       variant,
       executionProviders: backend.executionProviders,
       sessionOptions: backend.sessionOptions,
       cacheName: null,
       ...overrides,
-    }).finally(() => reads?.clear());
+    }).finally(weights.clear);
     return {
       probs: (record, image) => kev.probs(record, image),
       async systemOne(request) {

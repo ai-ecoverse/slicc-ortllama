@@ -65,7 +65,7 @@ curl -s localhost:11435/v1/audio/transcriptions -F file=@clip.wav -F response_fo
 | --- | --- |
 | `GET /v1/models` | models and role aliases; System One models list `decisions` in `architecture.output_modalities` |
 | `POST /v1/chat/completions` | [OpenAI chat completions](#chat-completions) on the decoder engine |
-| `POST /v1/systemone` | TypeSafe's [System One](#system-one) protocol, on kev.js |
+| `POST /v1/systemone` | TypeSafe's [System One](#system-one) protocol, on kev.js and jev-omni.js |
 | `POST /v1/audio/transcriptions` | OpenAI's [transcription](#transcription) API, on Whisper |
 | `GET /v1/realtime?intent=transcription` | OpenAI's [realtime transcription](#realtime-transcription) over WebSocket |
 | `POST /v1/audio/speech` | OpenAI's [text to speech](#speech), on Kokoro-82M |
@@ -109,6 +109,8 @@ User messages may carry images as OpenAI `image_url` parts, which is what pi-ai 
 | `ai-ecoverse/kev.js/kev-9b` | 8.9 GB | 7.8 s, 0.9–1.5 s | 4.4 s, 330 ms | 27 s |
 
 Loading a bundle takes about its size in memory. On a host, onnxruntime-node opens the graph by path and reads the weights itself: `kev-9b` peaks at 9.0 GB, `kev-4b` at 5.2 GB. In the kernel, onnxruntime-web asks for each weight's bytes while it builds the session, and ortllama reads them then, holding at most 1 GiB of weight files: for `kev-9b`, Chrome's page process peaks at 3.7 GiB and its GPU process at 8.1 GiB. jsh reads a whole file for each ranged read ([slicc-jsh#401](https://github.com/ai-ecoverse/slicc-jsh/issues/401)), so the larger bundles load about twice as slowly in the kernel as they would with every weight held at once. Both need kev.js 1.1 or later; with 1.0, every weight is read into memory first, and `kev-9b` peaks at about 20 GB.
+
+[Jev-Omni](https://github.com/ai-ecoverse/jev-omni.js) (`ai-ecoverse/jev-omni.js/jev-omni`, Gemma 4 12B with a 256-way decision head, 13.6 GB) answers the same requests through [jev-omni.js](https://github.com/ai-ecoverse/jev-omni.js), with `@ai-ecoverse/jev-omni.js` installed. Each question is one forward pass over the state, its instructions and its options: a choice's criteria, `no` and `yes` for a noul, a score's levels. Answers, confidences and `usage` follow the same rules as Kev's. Jev-Omni takes 2 to 256 options per question, so a choice with one criterion answers `400`. An `image` is embedded once per request. On WebGPU, onnxruntime-web limits a prompt to about 8,000 tokens; a longer one answers `422` with code `context_length_exceeded`. On an M4 Max, it loads in 7.3 s on the host CPU and answers the three-question request in 3 s; on host WebGPU, 2.6–5.8 s and 0.9 s; in the kernel, 13–23 s and 1–1.2 s. Loading peaks at 13.3 GB on host WebGPU (15.9 GB on the CPU), and in the kernel at 3.3 GiB in Chrome's page process and 13 GiB in its GPU process. That needs jev-omni.js 0.2 or later: 0.1 reads every weight into memory first, which peaks at 30 GB on the host and fails to allocate in the kernel.
 
 ### Transcription
 
@@ -230,7 +232,7 @@ Engines are picked by the files a model has, not by its name. A model is listed 
 
 ### Model libraries
 
-Model-specific libraries are never installed with ortllama. They are devDependencies here, and engines load them only when a model needs them, such as `@ai-ecoverse/kev.js` for System One and `espeak-ng`, `phonemize` or `phonemizer` for Kokoro. ortllama looks for each library:
+Model-specific libraries are never installed with ortllama. They are devDependencies here, and engines load them only when a model needs them, such as `@ai-ecoverse/kev.js` and `@ai-ecoverse/jev-omni.js` for System One and `espeak-ng`, `phonemize` or `phonemizer` for Kokoro. ortllama looks for each library:
 
 1. next to itself,
 2. in `ORTLLAMA_MODULE_PATH` (project folders that contain a `node_modules`),
@@ -325,8 +327,9 @@ Releases are published to npm from `main` by [semantic-release](https://semantic
 - [slicc-agent](https://github.com/ai-ecoverse/slicc-agent): the agent core that talks to ortllama from its worker.
 - [pi-audio](https://github.com/ai-ecoverse/pi-audio): voice bindings for pi that `@ai-ecoverse/slicc-ortllama/pi-audio` builds models for.
 - [kev.js](https://github.com/ai-ecoverse/kev.js): Kev decision models on onnxruntime-web, behind `/v1/systemone`.
+- [jev-omni.js](https://github.com/ai-ecoverse/jev-omni.js): the Jev-Omni decision classifier on onnxruntime-web, behind `/v1/systemone` too.
 - [models](https://github.com/ai-ecoverse/models): conversion recipes for the ONNX models ai-ecoverse publishes on [Hugging Face](https://huggingface.co/ai-ecoverse), including the Ministral 3 Reasoning export.
-- [jev-omni.js](https://github.com/ai-ecoverse/jev-omni.js) and [cua-s1.js](https://github.com/ai-ecoverse/cua-s1.js): more decision models in the browser on onnxruntime-web, compared with Kev in [decision-vision-bench](https://github.com/ai-ecoverse/decision-vision-bench).
+- [cua-s1.js](https://github.com/ai-ecoverse/cua-s1.js): Cua's form-filling and next-action models on onnxruntime-web, compared with Kev and Jev-Omni in [decision-vision-bench](https://github.com/ai-ecoverse/decision-vision-bench).
 - [slicc-shared-web](https://github.com/ai-ecoverse/slicc-shared-web): the shared lint, Renovate and CI configuration this repo uses.
 
 ### Elsewhere
