@@ -288,6 +288,7 @@ A model loads on one execution provider at a time, with `cpu` (`wasm` in the bro
 | `ORTLLAMA_MODEL_PATH` | none | extra plain folders, listed as `local/<name>` |
 | `ORTLLAMA_MODULE_PATH` | none | project folders searched for model libraries such as `@ai-ecoverse/kev.js` and `espeak-ng` |
 | `ORTLLAMA_ORT_LOG_LEVEL` | `error` | ONNX Runtime's log level |
+| `ORT_DISABLE_TELEMETRY` | `1` | onnxruntime-node on macOS and Linux uploads usage telemetry to Microsoft unless this is set, and its uploader can abort the process at exit, so ortllama sets it; `0` turns the telemetry back on |
 | `ORTLLAMA_PHONEMIZERS` | `misaki,phonemize,espeak-ng,phonemizer` | Kokoro's phonemizers, in order |
 
 ## Develop
