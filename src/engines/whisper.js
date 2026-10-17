@@ -65,12 +65,12 @@ export const whisper = {
   async detect(files) {
     const config = await configOf(files);
     if (!config) return null;
-    const present = [];
+    const variants = [];
     for (const variant of Object.keys(WHISPER_VARIANTS)) {
       if ((await files.exists(encoderFile(variant))) || (await files.exists(decoderFile(variant))))
-        present.push(variant);
+        variants.push(variant);
     }
-    const variants = present.length > 0 ? present : Object.keys(WHISPER_VARIANTS);
+    if (variants.length === 0) return null;
     let defaultVariant = variants[0];
     for (const variant of variants) {
       if (

@@ -61,9 +61,13 @@ export const kokoro = {
     } catch {
       return null;
     }
+    const variants = [];
+    for (const [variant, rel] of Object.entries(VARIANTS))
+      if (await files.exists(rel)) variants.push(variant);
+    if (variants.length === 0) return null;
     return {
-      variants: Object.keys(VARIANTS),
-      defaultVariant: 'fp32',
+      variants,
+      defaultVariant: variants[0],
       inputModalities: ['text'],
       outputModalities: ['audio'],
       contextLength: MAX_TOKENS,

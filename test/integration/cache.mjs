@@ -42,6 +42,7 @@ export async function fakeCache() {
     await put(`kev-tiny/r-1/${v}/model.onnx`, `onnx ${v}`);
     await put(`kev-tiny/r-1/${v}/model.onnx.data`, `data ${v}`);
   }
+  await put('kev-part/r-1/q8f32/model.onnx', 'onnx q8f32');
   await put('README.md', 'not a model');
   await mkdir(join(root, 'models--test--empty', 'refs'), { recursive: true });
   return root;

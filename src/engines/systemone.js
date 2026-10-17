@@ -39,7 +39,10 @@ export const systemone = {
   async detect(files) {
     const manifest = await manifestOf(files);
     if (!manifest) return null;
-    const variants = Object.keys(manifest.variants);
+    const variants = [];
+    for (const [variant, part] of Object.entries(manifest.variants))
+      if (await files.exists(part.model)) variants.push(variant);
+    if (variants.length === 0) return null;
     const defaultVariant = variants.includes('q8f32') ? 'q8f32' : variants[0];
     return {
       variants,

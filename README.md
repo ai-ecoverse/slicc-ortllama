@@ -148,7 +148,7 @@ curl -s localhost:11435/v1/audio/speech -H 'content-type: application/json' \
   -d '{ "input": "Hello from the kernel.", "voice": "bf_emma" }' > hello.wav
 ```
 
-Voices are Kokoro's American (`af_*`, `am_*`) and British English (`bf_*`, `bm_*`), Spanish (`e`), French (`f`), Hindi (`h`), Italian (`i`) and Brazilian Portuguese (`p`) voices; Japanese and Chinese are left out, since they have no phonemizer here. Variants are the repo's quantizations (`fp32`, `fp16`, `q8`, `q8f16`, `q4`, `q4f16`, `uint8`, `uint8f16`). `fp32` is the default: it is the fastest on CPU, and `fp16`, though faster on WebGPU, comes out garbled there.
+Voices are Kokoro's American (`af_*`, `am_*`) and British English (`bf_*`, `bm_*`), Spanish (`e`), French (`f`), Hindi (`h`), Italian (`i`) and Brazilian Portuguese (`p`) voices; Japanese and Chinese are left out, since they have no phonemizer here. Variants are the repo's quantizations that are in the cache (`fp32`, `fp16`, `q8`, `q8f16`, `q4`, `q4f16`, `uint8`, `uint8f16`). `fp32` is the default: it is the fastest on CPU, and `fp16`, though faster on WebGPU, comes out garbled there.
 
 #### Phonemizers
 
@@ -191,7 +191,7 @@ for await (const event of speak(model, { text: 'Hello.', voice: 'af_heart' }, { 
 
 ## Models
 
-ortllama downloads nothing. It reads the Hugging Face cache that [`hf download`](https://huggingface.co/docs/huggingface_hub/guides/cli) fills (`HF_HUB_CACHE`, else `HF_HOME/hub`, else `~/.cache/huggingface/hub`), through its `refs/` and `snapshots/`. A model ID is a Hub ID: `org/repo[/subfolder][@revision][:variant]`, such as `ai-ecoverse/kev.js/kev-0.8b:q8f32`. A model that isn't cached, or a variant with missing files, is answered with `404` and the `hf download` command that fetches it.
+ortllama downloads nothing. It reads the Hugging Face cache that [`hf download`](https://huggingface.co/docs/huggingface_hub/guides/cli) fills (`HF_HUB_CACHE`, else `HF_HOME/hub`, else `~/.cache/huggingface/hub`), through its `refs/` and `snapshots/`. A model ID is a Hub ID: `org/repo[/subfolder][@revision][:variant]`, such as `ai-ecoverse/kev.js/kev-0.8b:q8f32`. A model that isn't cached, or a cached variant with missing files, is answered with `404` and the `hf download` command that fetches it; a variant that isn't cached at all is answered with `404` and the variants that are.
 
 ### Roles
 
@@ -215,7 +215,7 @@ hf download onnx-community/silero-vad --include onnx/model.onnx
 
 ### Engines
 
-Engines are picked by the files a model has, not by its name. Each engine in `src/engines/` gets ONNX Runtime from the caller and provides `detect`, `missing`, `include`, `load`, `checkOverrides` and `check`.
+Engines are picked by the files a model has, not by its name. A model is listed only with the variants whose ONNX graph is in the cache, so MLX, PyTorch and safetensors checkpoints that share a config with an ONNX export, such as `mlx-community/whisper-large-v3-turbo`, stay out of `ortllama ls` and `/v1/models`. Each engine in `src/engines/` gets ONNX Runtime from the caller and provides `detect`, `missing`, `include`, `load`, `checkOverrides` and `check`.
 
 - **Decoder.** Runs the transformers.js layout (`onnx/decoder_model_merged*.onnx` with `embed_tokens*.onnx`, or `onnx/model*.onnx`; variants are its quantizations, such as `q4f16`) and the onnxruntime-genai layout (`genai_config.json`, one variant per folder), with the model's own chat template and, when the export has one, its `vision_encoder*.onnx`. A small profile per family, chosen from the template, parses tool calls and reasoning; Mistral's `[TOOL_CALLS]name[ARGS]{…}` and `[THINK]…[/THINK]` are built in, and control-token names in client text are escaped so they cannot inject one.
 - **Whisper.** Runs the transformers.js ONNX exports (`config.json` with `model_type: "whisper"`, `onnx/encoder_model*.onnx` and `onnx/decoder_model_merged*.onnx`, external `.onnx_data` included). Variants follow the file suffixes: `fp32`, `fp16`, `q8` (`_quantized`), `int8`, `uint8`, `q4`, `q4f16`, `bnb4`; the default is the first complete one in that order. Mel bins, special tokens, languages and the timestamp grid come from the model's configs and tokenizer, so large-v3 models (128 mel bins, the extra `yue` token) work as well. Models known to work, with the mean word error rate on the `check` clips and real-time factors for a 2.7-second and a long clip (44 s on the host, 32 s in the kernel) on an M4 Max:
