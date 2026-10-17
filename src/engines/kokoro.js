@@ -67,7 +67,7 @@ export const kokoro = {
     if (variants.length === 0) return null;
     return {
       variants,
-      defaultVariant: variants[0],
+      defaultVariant: variants.find((v) => v !== 'fp16') ?? variants[0],
       inputModalities: ['text'],
       outputModalities: ['audio'],
       contextLength: MAX_TOKENS,

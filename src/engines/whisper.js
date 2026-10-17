@@ -67,23 +67,13 @@ export const whisper = {
     if (!config) return null;
     const variants = [];
     for (const variant of Object.keys(WHISPER_VARIANTS)) {
-      if ((await files.exists(encoderFile(variant))) || (await files.exists(decoderFile(variant))))
+      if ((await files.exists(encoderFile(variant))) && (await files.exists(decoderFile(variant))))
         variants.push(variant);
     }
     if (variants.length === 0) return null;
-    let defaultVariant = variants[0];
-    for (const variant of variants) {
-      if (
-        (await files.exists(encoderFile(variant))) &&
-        (await files.exists(decoderFile(variant)))
-      ) {
-        defaultVariant = variant;
-        break;
-      }
-    }
     return {
       variants,
-      defaultVariant,
+      defaultVariant: variants[0],
       inputModalities: ['audio'],
       outputModalities: ['text'],
       contextLength: config.max_target_positions ?? null,

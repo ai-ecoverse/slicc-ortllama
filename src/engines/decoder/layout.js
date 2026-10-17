@@ -143,7 +143,7 @@ async function transformersLayout(files) {
   const tjs = config['transformers.js_config'] ?? {};
   const external = tjs.use_external_data_format ?? {};
   const has = async (name) => Object.hasOwn(external, name) || (await files.exists(`onnx/${name}`));
-  const found = await onnxVariants(has);
+  const found = await onnxVariants((name) => files.exists(`onnx/${name}`));
   if (!found || (found.stem === 'model' && !causal(config))) return null;
   const template = await templateOf(files, ['']);
   if (!template) return null;
@@ -174,7 +174,8 @@ async function transformersLayout(files) {
 async function genaiVariant(files, dir) {
   const genai = await readJson(files, `${dir}genai_config.json`);
   const decoder = genai?.model?.decoder;
-  if (typeof decoder?.filename !== 'string') return null;
+  if (typeof decoder?.filename !== 'string' || !(await files.exists(`${dir}${decoder.filename}`)))
+    return null;
   const embedding = genai.model.embedding?.filename;
   return {
     genai,

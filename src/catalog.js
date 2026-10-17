@@ -54,12 +54,16 @@ function hintedProviders(id, hint) {
 
 async function specialized(engine, files, base, hint, variant) {
   const info = { ...base, hint: hint ?? {} };
-  if (!engine.specialize || !info.variants.includes(variant)) return { info };
+  if (!engine.specialize) return { info };
   return engine.specialize(files, info, variant);
 }
 
+function hintedVariant(info, hint) {
+  return info.variants.includes(hint?.variant) ? hint.variant : info.defaultVariant;
+}
+
 async function listEntry({ id, files, found, revision }, hint) {
-  const defaultVariant = hint?.variant ?? found.info.defaultVariant;
+  const defaultVariant = hintedVariant(found.info, hint);
   const { info, details } = await specialized(
     found.engine,
     files,
@@ -149,7 +153,7 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
     requestedRevision = null,
   }) {
     const { engine } = found;
-    const chosen = variant ?? hints[id]?.variant ?? found.info.defaultVariant;
+    const chosen = variant ?? hintedVariant(found.info, hints[id]);
     if (!found.info.variants.includes(chosen)) {
       throw notFound(
         `model ${id} has no variant ${chosen}; it has ${found.info.variants.join(', ')}`,
@@ -215,11 +219,13 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
         );
       const root = snapshotFiles(cache, repo, rev.snapshot);
       const files = subfolder ? root.sub(subfolder) : root;
-      const found = (await isDir(files.root)) ? await detectEngine(files, engines) : null;
-      if (!found)
+      if (!(await isDir(files.root)))
         throw notFound(
           `model ${id} has no files ortllama can run in the cache; run: ${downloadHint(repo, { revision, include })}`
         );
+      const found = await detectEngine(files, engines);
+      if (!found)
+        throw notFound(`model ${id} is in the cache, but has no ONNX model ortllama can run`);
       const resolved = await finish({
         id,
         files,
