@@ -122,6 +122,7 @@ async function detach(values, io, home) {
 async function ls(values, io) {
   const catalog = await openCatalog({ env: io.env });
   const models = await catalog.list();
+  for (const note of await catalog.unrecognized()) io.err.write(`note: ${note}\n`);
   if (values.json) {
     io.out.write(`${JSON.stringify({ models, aliases: catalog.aliases }, null, 2)}\n`);
     return 0;

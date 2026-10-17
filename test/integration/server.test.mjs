@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { request } from 'node:http';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { promisify } from 'node:util';
 import { startServer } from '../../src/index.js';
-import { fakeCache, fakeHome } from './cache.mjs';
+import { fakeCache, fakeHome, SHA } from './cache.mjs';
 
 const run = promisify(execFile);
 const bin = new URL('../../src/bin.js', import.meta.url).pathname;
@@ -77,6 +77,35 @@ describe('ortllama server on a Hugging Face cache', () => {
       await post('/v1/systemone', { model: 'test/kev/kev-gone', state: 'x', questions: {} })
     ).json();
     assert.match(sub.error.message, /hf download test\/kev --include 'kev-gone\/\*'$/);
+  });
+
+  test('names the ONNX files of a cached export whose layout no engine knows', async () => {
+    const snapshot = join(cache, 'models--test--int4', 'snapshots', SHA);
+    await mkdir(join(snapshot, 'onnx'), { recursive: true });
+    await mkdir(join(cache, 'models--test--int4', 'refs'), { recursive: true });
+    await writeFile(join(cache, 'models--test--int4', 'refs', 'main'), SHA);
+    await writeFile(join(snapshot, 'config.json'), '{"model_type":"mistral"}');
+    await writeFile(join(snapshot, 'onnx', 'decoder_model_merged_int4.onnx'), 'x');
+    const message =
+      'model test/int4 is in the cache, but ortllama does not recognize the layout of its ONNX files (onnx/decoder_model_merged_int4.onnx); the layouts it runs are listed in https://github.com/ai-ecoverse/slicc-ortllama#engines';
+    const response = await post('/v1/systemone', { model: 'test/int4', state: 'x', questions: {} });
+    assert.equal(response.status, 404);
+    assert.equal((await response.json()).error.message, message);
+    const kev = await (
+      await post('/v1/systemone', { model: 'test/kev', state: 'x', questions: {} })
+    ).json();
+    assert.equal(
+      kev.error.message,
+      'model test/kev is in the cache, but has no ONNX model ortllama can run'
+    );
+    const env = {
+      ...process.env,
+      HF_HUB_CACHE: cache,
+      ORTLLAMA_HOME: home,
+      ORTLLAMA_MODEL_PATH: '',
+    };
+    const { stderr } = await run(process.execPath, [bin, 'ls'], { env });
+    assert.equal(stderr, `note: ${message}\n`);
   });
 
   test('rejects unknown variants and non-decision models', async () => {
