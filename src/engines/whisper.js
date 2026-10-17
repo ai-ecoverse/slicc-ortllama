@@ -55,10 +55,13 @@ async function createSession(backend, files, rel) {
   });
 }
 
+const SMALL_LAYERS = 6;
+
 export const whisper = {
   name: 'whisper',
   capability: 'transcription',
-  providers: { node: ['cpu'] },
+  providers: (info) =>
+    (info?.config?.encoder_layers ?? 0) <= SMALL_LAYERS ? { node: ['cpu'] } : {},
   async detect(files) {
     const config = await configOf(files);
     if (!config) return null;

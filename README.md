@@ -226,7 +226,7 @@ Engines are picked by the files a model has, not by its name. Each engine in `sr
 | `onnx-community/whisper-base` | 291 MB | 0.046 | 0.09 / 0.020 | 0.11 / 0.096 | 0.13 / 0.096 |
 | `onnx-community/whisper-large-v3-turbo:q4` | 759 MB | 0.005 | 1.3 / 0.20 | 0.27 / 0.070 | 0.31 / 0.118 |
 
-`whisper-tiny` stays the default: it is the smallest, and the fastest on the host CPU, which is where Whisper runs best on host Node. `whisper-large-v3-turbo` makes almost no mistakes, in French and Spanish too, but wants WebGPU, where its 32-layer encoder runs five times faster than on the CPU; fetch it with `hf download onnx-community/whisper-large-v3-turbo --include '*.json' onnx/encoder_model_q4.onnx onnx/decoder_model_merged_q4.onnx`. `whisper-base` sits in between. In a realtime session the final transcript follows the end of speech after 0.2 s with `whisper-tiny` on the CPU, 0.4 s with `whisper-base` on WebGPU, and 1 s with `whisper-large-v3-turbo` on WebGPU (5 s on the CPU).
+`whisper-tiny` stays the default: it is the smallest, and the fastest on the host CPU, which is where Whisper runs best on host Node. `whisper-large-v3-turbo` makes almost no mistakes, in French and Spanish too, but wants WebGPU, where its 32-layer encoder runs five times faster than on the CPU, so it loads on the host's default order rather than Whisper's `cpu`; fetch it with `hf download onnx-community/whisper-large-v3-turbo --include '*.json' onnx/encoder_model_q4.onnx onnx/decoder_model_merged_q4.onnx`. `whisper-base` sits in between. In a realtime session the final transcript follows the end of speech after 0.2 s with `whisper-tiny` on the CPU, 0.4 s with `whisper-base` on WebGPU, and 1 s with `whisper-large-v3-turbo` on WebGPU (5 s on the CPU).
 
 ### Model libraries
 
@@ -258,7 +258,7 @@ A model loads on one execution provider at a time, with `cpu` (`wasm` in the bro
 
 1. `ORTLLAMA_EP`, such as `cuda,cpu`. It beats every hint because it is the operator's switch for one process: `ORTLLAMA_EP=cpu` keeps every model off the GPU, whatever `config.json` says.
 2. The model's hint in `config.json`, such as `{ "hints": { "onnx-community/whisper-tiny": { "executionProviders": ["webgpu", "cpu"] } } }`. A model loaded with a hint is a separate loaded model.
-3. The engine's preference: Whisper and Silero VAD use `cpu` on Node, which leaves the GPU to chat and System One (Whisper's small decoder steps are as fast there as on WebGPU, and Silero's frames much faster), and Silero uses `wasm` in the browser.
+3. The engine's preference: Whisper models with up to 6 encoder layers (`tiny`, `base`) and Silero VAD use `cpu` on Node, which leaves the GPU to chat and System One (small Whisper decoder steps are as fast there as on WebGPU, and Silero's frames much faster), and Silero uses `wasm` in the browser. Larger Whisper models, such as `large-v3-turbo`, take the host's default, since their encoder runs five times faster on WebGPU.
 4. The host's default, chosen from what `onnxruntime-node` 1.30 ships there:
 
 | Host | onnxruntime-node 1.30 has | Default |
