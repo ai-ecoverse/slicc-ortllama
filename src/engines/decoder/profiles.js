@@ -124,6 +124,9 @@ export function defaultSystemMessage(template) {
 export const DIRECT_ANSWER =
   'Answer directly and concisely. Do not draft, plan or show any reasoning or thinking.';
 
+export const DIRECT_TOOLS =
+  'Do not show any reasoning or thinking. If a listed tool can answer, call it instead of guessing; otherwise answer directly and concisely.';
+
 export const mistral = {
   name: 'mistral',
   markers: { toolCall: '[TOOL_CALLS]', args: '[ARGS]', think: '[THINK]', thinkEnd: '[/THINK]' },

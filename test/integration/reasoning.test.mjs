@@ -146,6 +146,32 @@ describe('chat completions on Ministral 3 Reasoning through pi-ai', { skip }, ()
     if (call) assert.match(call.arguments.city, /Paris/);
   });
 
+  test('with reasoning_effort none and tools, still calls the tool instead of guessing', async () => {
+    for (const seed of [1, 2, 3]) {
+      const response = await fetch(`${server.url}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: MODEL,
+          seed,
+          reasoning_effort: 'none',
+          tool_choice: 'auto',
+          max_tokens: 256,
+          tools: [{ type: 'function', function: weather }],
+          messages: [{ role: 'user', content: 'What is the weather in Paris right now?' }],
+        }),
+      });
+      const { choices } = await response.json();
+      assert.equal(
+        choices[0].finish_reason,
+        'tool_calls',
+        `seed ${seed}: ${JSON.stringify(choices[0])}`
+      );
+      assert.equal(choices[0].message.tool_calls[0].function.name, 'get_weather');
+      assert.equal(choices[0].message.reasoning_content, undefined);
+    }
+  });
+
   test('answers without reasoning when reasoning_effort is none', async () => {
     const response = await fetch(`${server.url}/v1/chat/completions`, {
       method: 'POST',

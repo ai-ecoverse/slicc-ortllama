@@ -1,7 +1,7 @@
 import { Template } from '@huggingface/jinja';
 import { badRequest, HttpError } from '../../http/errors.js';
 import { createPrefixCache } from './prefix.js';
-import { checkTools, DIRECT_ANSWER, escaper } from './profiles.js';
+import { checkTools, DIRECT_ANSWER, DIRECT_TOOLS, escaper } from './profiles.js';
 import { createRng, pick } from './sample.js';
 import { createParser, stopFilter } from './stream.js';
 import { expandImages, requestImages, splicer } from './vision.js';
@@ -48,7 +48,8 @@ const INSTRUCTIONS = new Set(['system', 'developer']);
 export function directMessages(request, thinks) {
   if (request.reasoningEffort !== 'none' || !thinks || INSTRUCTIONS.has(request.messages[0]?.role))
     return request.messages;
-  return [{ role: 'system', content: DIRECT_ANSWER }, ...request.messages];
+  const tools = request.tools.length > 0 && request.toolChoice !== 'none';
+  return [{ role: 'system', content: tools ? DIRECT_TOOLS : DIRECT_ANSWER }, ...request.messages];
 }
 
 function samplingFor(request, defaults, banned) {
@@ -61,12 +62,13 @@ function samplingFor(request, defaults, banned) {
   };
 }
 
-function settingsOf(sampling, budget) {
+function settingsOf(sampling, budget, vision) {
   return {
     temperature: sampling.temperature,
     top_p: sampling.topP,
     top_k: sampling.topK,
     max_tokens: budget,
+    ...vision?.report,
   };
 }
 
@@ -248,7 +250,7 @@ export function createChat({
     return {
       finishReason: finish,
       ...summary(ids, run, times, run.vision),
-      settings: settingsOf(sampling, budget),
+      settings: settingsOf(sampling, budget, vision),
     };
   }
 

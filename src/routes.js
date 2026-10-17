@@ -18,6 +18,7 @@ function modelEntry(m, aliasOf = null) {
       variants: m.variants,
       default_variant: m.defaultVariant,
       revision: m.revision,
+      ...m.details,
       ...(aliasOf ? { alias_of: aliasOf.target } : {}),
     },
   };

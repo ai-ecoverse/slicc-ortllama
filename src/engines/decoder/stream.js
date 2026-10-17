@@ -31,13 +31,20 @@ export function createParser({ decode, markers, special, emit, newId = toolCallI
     state = 'args';
   };
 
+  const closeBare = () => {
+    const brace = name.indexOf('{');
+    const args = brace > 0 ? name.slice(brace).trim() : '{}';
+    if (brace > 0) name = name.slice(0, brace);
+    startCall();
+    emit({ type: 'args', index: calls - 1, text: args });
+  };
+
   return {
     push(id) {
       if (id === markers.toolCall) {
         flush();
         if (state === 'name') {
-          startCall();
-          emit({ type: 'args', index: calls - 1, text: '{}' });
+          closeBare();
         }
         state = 'name';
         name = '';
@@ -68,8 +75,7 @@ export function createParser({ decode, markers, special, emit, newId = toolCallI
     end() {
       flush();
       if (state === 'name') {
-        startCall();
-        emit({ type: 'args', index: calls - 1, text: '{}' });
+        closeBare();
       }
       return { toolCalls: calls };
     },
