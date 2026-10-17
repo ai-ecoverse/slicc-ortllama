@@ -36,10 +36,12 @@ export function withHalfInputs(ort) {
 
 export async function loadBackend({
   env = process.env,
+  hostEnv = process.env,
   importOrt = () => import('onnxruntime-node'),
   platform,
   arch,
 } = {}) {
+  hostEnv.ORT_DISABLE_TELEMETRY ??= env.ORT_DISABLE_TELEMETRY ?? '1';
   let ort;
   try {
     ort = await importOrt();
