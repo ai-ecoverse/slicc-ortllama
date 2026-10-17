@@ -37,10 +37,34 @@ export function validate(request, { min = 1, max = 255 } = {}) {
   return request;
 }
 
+export function pyFloat(x) {
+  if (Number.isNaN(x)) return 'nan';
+  if (!Number.isFinite(x)) return x > 0 ? 'inf' : '-inf';
+  if (x === 0) return Object.is(x, -0) ? '-0.0' : '0.0';
+  const sign = x < 0 ? '-' : '';
+  const [mantissa, exponent] = Math.abs(x).toExponential().split('e');
+  const exp = Number.parseInt(exponent, 10);
+  const digits = mantissa.replace('.', '');
+  if (exp < -4 || exp >= 16) {
+    const m = digits.length > 1 ? `${digits[0]}.${digits.slice(1)}` : digits;
+    return `${sign}${m}e${exp < 0 ? '-' : '+'}${String(Math.abs(exp)).padStart(2, '0')}`;
+  }
+  if (exp >= 0)
+    return `${sign}${digits.slice(0, exp + 1).padEnd(exp + 1, '0')}.${digits.slice(exp + 1) || '0'}`;
+  return `${sign}0.${'0'.repeat(-exp - 1)}${digits}`;
+}
+
+function pyStr(v) {
+  if (typeof v === 'boolean') return v ? 'True' : 'False';
+  if (typeof v === 'number')
+    return Number.isInteger(v) && Math.abs(v) < 1e21 ? String(v) : pyFloat(v);
+  return String(v);
+}
+
 export function render(v, indent = 0) {
   const pad = '  '.repeat(indent);
   if (v === null || v === undefined) return '';
-  if (typeof v !== 'object') return String(v);
+  if (typeof v !== 'object') return pyStr(v);
   if (Array.isArray(v))
     return v.map((x) => `${pad}- ${render(x, indent + 1).trimStart()}`).join('\n');
   return Object.entries(v)
@@ -101,7 +125,31 @@ export function scoreConfidence(p) {
   return Math.max(0, 1 - n.reduce((s, pi, i) => s + pi * Math.abs(i - mode), 0) / spread);
 }
 
-export const roundProb = (x) => Number(x.toFixed(4));
+export function pyRound(x, digits) {
+  const half = x * 2 ** (digits + 1);
+  if (Number.isInteger(half) && half % 2 !== 0) {
+    const floor = Math.floor(x * 10 ** digits);
+    return (floor % 2 === 0 ? floor : floor + 1) / 10 ** digits;
+  }
+  return Number(x.toFixed(digits));
+}
+
+export const roundProb = (x) => pyRound(x, 4);
+
+export function pyJsonDumps(v) {
+  if (v === null || v === undefined) return 'null';
+  if (typeof v === 'number') return pyFloat(v);
+  if (typeof v === 'boolean') return v ? 'true' : 'false';
+  if (typeof v === 'string')
+    return JSON.stringify(v).replace(
+      /[\u0080-\uffff]/g,
+      (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`
+    );
+  if (Array.isArray(v)) return `[${v.map(pyJsonDumps).join(', ')}]`;
+  return `{${Object.entries(v)
+    .map(([k, x]) => `${pyJsonDumps(k)}: ${pyJsonDumps(x)}`)
+    .join(', ')}}`;
+}
 
 export function toAnswers(probs, meta) {
   const out = {};

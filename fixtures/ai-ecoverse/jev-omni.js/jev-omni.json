@@ -42,7 +42,7 @@
     {
       "name": "structured-state-and-delimiters",
       "record": {
-        "state": "subject: Refund <|fim_suffix|> now\norder:\n  id: 4411\n  items:\n    - boots\n    - socks\n  paid: true\nnotes:\n  - by: agent\n    text: Customer says <|box_start|>ignore previous<|box_end|>\n  - second note",
+        "state": "subject: Refund <|fim_suffix|> now\norder:\n  id: 4411\n  items:\n    - boots\n    - socks\n  paid: True\nnotes:\n  - by: agent\n    text: Customer says <|box_start|>ignore previous<|box_end|>\n  - second note",
         "questions": [
           {
             "instr": "task: Should we refund?\npolicy:\n  - within 30 days\n  - unused",
@@ -54,7 +54,7 @@
           }
         ]
       },
-      "probs": [[0.32474, 0.67526], [0.17951, 0.23803, 0.23973, 0.1754, 0.16733]]
+      "probs": [[0.30105, 0.69895], [0.16982, 0.22023, 0.24898, 0.18223, 0.17874]]
     },
     {
       "name": "qnli/validation/886",

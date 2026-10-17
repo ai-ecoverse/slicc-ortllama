@@ -1,5 +1,5 @@
 import { badRequest, HttpError } from '../http/errors.js';
-import { toAnswers, toRecord, validate } from './decisions.js';
+import { pyJsonDumps, toAnswers, toRecord, validate } from './decisions.js';
 import { optional } from './optional.js';
 import { detectBundle, localWeights, systemone } from './systemone.js';
 
@@ -67,7 +67,7 @@ export const jev = {
           throw error;
         }
         const answers = toAnswers(result.probs, meta);
-        const output = model.tokenizer.encode(JSON.stringify(answers), {
+        const output = model.tokenizer.encode(pyJsonDumps(answers), {
           add_special_tokens: false,
         }).ids.length;
         return {
