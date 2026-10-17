@@ -261,15 +261,27 @@ function message(events) {
   };
 }
 
-export function chatRoute({ catalog, runtime, now = Date.now, newId = () => crypto.randomUUID() }) {
+export const DEFAULT_MAX_TOKENS = 8192;
+
+export function chatRoute({
+  catalog,
+  runtime,
+  maxTokens = DEFAULT_MAX_TOKENS,
+  now = Date.now,
+  newId = () => crypto.randomUUID(),
+}) {
   return {
     async handle({ body, signal }) {
       const parsed = parseChatRequest(body);
+      parsed.request.maxTokens ??= maxTokens;
       const resolved = await catalog.resolve(parsed.model);
       if (resolved.engine.capability !== 'chat')
         throw badRequest(`model ${resolved.id} does not answer chat completions`, 'model');
       if (imageParts(parsed.request).length > 0 && !resolved.info.inputModalities.includes('image'))
-        throw badRequest(`model ${resolved.id} takes no images`, 'messages');
+        throw badRequest(
+          `model ${resolved.id} takes no images${resolved.download ? `; for its vision encoder, run: ${resolved.download}` : ''}`,
+          'messages'
+        );
       await attachImages(parsed.request);
       const id = `chatcmpl-${newId().replaceAll('-', '')}`;
       const created = Math.floor(now() / 1000);
@@ -311,6 +323,7 @@ export function chatRoute({ catalog, runtime, now = Date.now, newId = () => cryp
           ],
           usage: result.usage,
           timings: result.timings,
+          generation_settings: result.settings,
         };
       }
       const chunk = (choices, extra = {}) => ({
@@ -327,6 +340,7 @@ export function chatRoute({ catalog, runtime, now = Date.now, newId = () => cryp
           }
           yield chunk([{ index: 0, delta: {}, finish_reason: e.result.finishReason }], {
             timings: e.result.timings,
+            generation_settings: e.result.settings,
           });
           if (parsed.includeUsage) yield chunk([], { usage: e.result.usage });
         }

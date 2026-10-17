@@ -107,11 +107,34 @@ function chatMessages(messages, escape, markers = {}) {
 const ALTERNATION =
   /\{\{-?\s*raise_exception\(\s*'After the optional system message[^']*'\s*\)\s*-?\}\}/;
 
+const DEFAULT_SYSTEM = /set default_system_message\s*=\s*'/;
+
+export function defaultSystemMessage(template) {
+  const start = DEFAULT_SYSTEM.exec(template);
+  if (!start) return null;
+  let out = '';
+  for (let i = start.index + start[0].length; i < template.length; i++) {
+    if (template[i] === "'") return out;
+    if (template[i] === '\\') i++;
+    out += template[i];
+  }
+  return null;
+}
+
+export const DIRECT_ANSWER =
+  'Answer directly and concisely. Do not draft, plan or show any reasoning or thinking.';
+
+export const DIRECT_TOOLS =
+  'Do not show any reasoning or thinking. If a listed tool can answer, call it instead of guessing; otherwise answer directly and concisely.';
+
 export const mistral = {
   name: 'mistral',
   markers: { toolCall: '[TOOL_CALLS]', args: '[ARGS]', think: '[THINK]', thinkEnd: '[/THINK]' },
   tools: true,
   matches: (template) => template.includes('[TOOL_CALLS]') && template.includes('[INST]'),
+  sampling: (template) =>
+    template.includes('[THINK]') ? { temperature: 0.7, topP: 0.95 } : { temperature: 0.1 },
+  thinksByDefault: (template) => defaultSystemMessage(template)?.includes('[THINK]') ?? false,
   template: (source) => source.replace(ALTERNATION, ''),
   tokenizer(json) {
     const first =
@@ -130,6 +153,8 @@ export const plain = {
   markers: {},
   tools: false,
   matches: () => true,
+  sampling: () => ({}),
+  thinksByDefault: () => false,
   template: (source) => source,
   tokenizer: (json) => json,
   messages: chatMessages,

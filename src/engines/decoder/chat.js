@@ -1,7 +1,7 @@
 import { Template } from '@huggingface/jinja';
 import { badRequest, HttpError } from '../../http/errors.js';
 import { createPrefixCache } from './prefix.js';
-import { checkTools, escaper } from './profiles.js';
+import { checkTools, DIRECT_ANSWER, DIRECT_TOOLS, escaper } from './profiles.js';
 import { createRng, pick } from './sample.js';
 import { createParser, stopFilter } from './stream.js';
 import { expandImages, requestImages, splicer } from './vision.js';
@@ -43,6 +43,35 @@ function summary(ids, run, times, vision) {
   };
 }
 
+const INSTRUCTIONS = new Set(['system', 'developer']);
+
+export function directMessages(request, thinks) {
+  if (request.reasoningEffort !== 'none' || !thinks || INSTRUCTIONS.has(request.messages[0]?.role))
+    return request.messages;
+  const tools = request.tools.length > 0 && request.toolChoice !== 'none';
+  return [{ role: 'system', content: tools ? DIRECT_TOOLS : DIRECT_ANSWER }, ...request.messages];
+}
+
+function samplingFor(request, defaults, banned) {
+  return {
+    temperature: request.temperature ?? defaults.temperature ?? 1,
+    topP: request.topP ?? defaults.topP ?? 1,
+    topK: request.topK ?? defaults.topK ?? 0,
+    rng: createRng(request.seed),
+    banned,
+  };
+}
+
+function settingsOf(sampling, budget, vision) {
+  return {
+    temperature: sampling.temperature,
+    top_p: sampling.topP,
+    top_k: sampling.topK,
+    max_tokens: budget,
+    ...vision?.report,
+  };
+}
+
 export function createChat({
   model,
   tokenizer,
@@ -66,6 +95,7 @@ export function createChat({
   const markers = Object.fromEntries(Object.entries(profile.markers).map(([k, v]) => [k, idOf(v)]));
   const eosIds = new Set([...eos, idOf(eosToken)].filter((x) => x !== null));
   const compiled = new Template(profile.template(template));
+  const thinks = profile.thinksByDefault(template);
   const cache = createPrefixCache({
     model,
     maxEntries: 2,
@@ -74,7 +104,7 @@ export function createChat({
   const decode = (ids) => tokenizer.decode(ids, { skip_special_tokens: false });
 
   function render(request) {
-    const messages = profile.messages(request.messages, esc);
+    const messages = profile.messages(directMessages(request, thinks), esc);
     const tools = request.tools.length > 0 ? esc.deep(request.tools) : undefined;
     let text;
     try {
@@ -191,13 +221,7 @@ export function createChat({
       request.maxTokens ?? Number.POSITIVE_INFINITY,
       contextLength - ids.length
     );
-    const sampling = {
-      temperature: request.temperature ?? defaults.temperature ?? 1,
-      topP: request.topP ?? defaults.topP ?? 1,
-      topK: request.topK ?? defaults.topK ?? 0,
-      rng: createRng(request.seed),
-      banned,
-    };
+    const sampling = samplingFor(request, defaults, banned);
     if (signal?.aborted) throw signal.reason;
     emit({ type: 'start', promptTokens: ids.length });
     const out = output(request, emit);
@@ -223,7 +247,11 @@ export function createChat({
     }
     times.end = now();
     if (out.toolCalls > 0 && finish === 'stop' && !out.stopped) finish = 'tool_calls';
-    return { finishReason: finish, ...summary(ids, run, times, run.vision) };
+    return {
+      finishReason: finish,
+      ...summary(ids, run, times, run.vision),
+      settings: settingsOf(sampling, budget, vision),
+    };
   }
 
   return { chat, render, cache };

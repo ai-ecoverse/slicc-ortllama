@@ -1,11 +1,25 @@
 import { Tokenizer } from '@huggingface/tokenizers';
 import { createChat } from './chat.js';
-import { detectLayout, hasVision, includePatterns, neededFiles } from './layout.js';
+import {
+  detectLayout,
+  hasVision,
+  includePatterns,
+  neededFiles,
+  pickVision,
+  visionTarget,
+} from './layout.js';
 import { pixtralConfig } from './pixtral.js';
 import { pickProfile } from './profiles.js';
 import { openModel } from './session.js';
 
-const DEFAULT_TEMPERATURE = { mistral: 0.15 };
+export function samplingDefaults(generation, family) {
+  const g = generation ?? {};
+  return {
+    temperature: g.do_sample === false ? 0 : (g.temperature ?? family.temperature),
+    topP: g.top_p ?? family.topP,
+    topK: g.top_k ?? family.topK,
+  };
+}
 
 function tokenName(value) {
   return typeof value === 'string' ? value : (value?.content ?? '');
@@ -68,6 +82,26 @@ export const decoder = {
     return out;
   },
   include: (info, variant) => includePatterns(info, variant),
+  async specialize(files, info, variant) {
+    const picked = await pickVision(files, info, variant);
+    if (!picked) return { info: { ...info, vision: null } };
+    const preferred = visionTarget(info, variant).dtype;
+    const dtype = picked.cached ? picked.part.dtype : 'missing';
+    const report = {
+      vision_encoder: dtype,
+      ...(dtype === preferred ? {} : { vision_encoder_preferred: preferred }),
+    };
+    return {
+      info: {
+        ...info,
+        vision: picked.cached ? picked.part : null,
+        inputModalities: picked.cached ? ['text', 'image'] : ['text'],
+        report,
+      },
+      key: `vision=${dtype}`,
+      details: report,
+    };
+  },
   async load({ backend, files, variant, info, overrides = {} }) {
     const dir = info.tokenizerDir;
     const tokenizerJson = await files.json(`${dir}tokenizer.json`);
@@ -75,15 +109,15 @@ export const decoder = {
     const template = await templateSource(files, info);
     const profile = pickProfile(template, overrides.profile);
     const tokenizer = new Tokenizer(profile.tokenizer(tokenizerJson), tokenizerConfig);
-    const image = await hasVision(files, info, variant);
-    const part = info.parts[variant];
+    const chosen =
+      info.vision === undefined ? (await decoder.specialize(files, info, variant)).info : info;
+    const image = Boolean(chosen.vision);
     const model = await openModel({
       backend,
       files,
-      part: image ? part : { ...part, vision: null },
+      part: { ...info.parts[variant], vision: chosen.vision },
       shape: await shapeOf(files, info, variant),
     });
-    const g = info.generation ?? {};
     const chat = createChat({
       model,
       tokenizer,
@@ -94,13 +128,11 @@ export const decoder = {
       profile,
       contextLength: overrides.contextLength ?? info.contextLength,
       eos: info.eos,
-      defaults: {
-        temperature: g.temperature ?? DEFAULT_TEMPERATURE[profile.name],
-        topP: g.top_p,
-        topK: g.top_k,
-      },
+      defaults: samplingDefaults(info.generation, profile.sampling(template)),
       prefill: overrides.prefill,
-      vision: image ? await visionOf(files, tokenizer, model) : null,
+      vision: image
+        ? { ...(await visionOf(files, tokenizer, model)), report: chosen.report }
+        : null,
     });
     return {
       profile: profile.name,

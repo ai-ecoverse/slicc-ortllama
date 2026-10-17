@@ -38,6 +38,35 @@ export function localRoots(env = process.env) {
   return (env.ORTLLAMA_MODEL_PATH ?? '').split(delimiter).filter(Boolean);
 }
 
+async function specialized(engine, files, base, hint, variant) {
+  const info = { ...base, hint: hint ?? {} };
+  if (!engine.specialize || !info.variants.includes(variant)) return { info };
+  return engine.specialize(files, info, variant);
+}
+
+async function listEntry({ id, files, found, revision }, hint) {
+  const defaultVariant = hint?.variant ?? found.info.defaultVariant;
+  const { info, details } = await specialized(
+    found.engine,
+    files,
+    found.info,
+    hint,
+    defaultVariant
+  );
+  return {
+    id,
+    engine: found.engine.name,
+    capability: found.engine.capability,
+    variants: info.variants,
+    defaultVariant,
+    revision,
+    inputModalities: info.inputModalities,
+    outputModalities: info.outputModalities,
+    contextLength: info.contextLength,
+    ...(details ? { details } : {}),
+  };
+}
+
 export function createCatalog({ cache, home, config, modelPath = [], engines = ENGINES }) {
   const aliases = aliasesOf(config);
   const hints = config.hints ?? {};
@@ -105,19 +134,24 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
     subfolder,
     requestedRevision = null,
   }) {
-    const { engine, info } = found;
-    const chosen = variant ?? hints[id]?.variant ?? info.defaultVariant;
-    if (!info.variants.includes(chosen)) {
+    const { engine } = found;
+    const chosen = variant ?? hints[id]?.variant ?? found.info.defaultVariant;
+    if (!found.info.variants.includes(chosen)) {
       throw notFound(
-        `model ${id} has no variant ${chosen}; it has ${info.variants.join(', ')}`,
+        `model ${id} has no variant ${chosen}; it has ${found.info.variants.join(', ')}`,
         'variant_not_found'
       );
     }
+    const { info, key } = await specialized(engine, files, found.info, hints[id], chosen);
     const missing = await engine.missing(files, info, chosen);
+    const download = repo
+      ? downloadHint(repo, {
+          revision: requestedRevision,
+          include: prefixed(subfolder, engine.include(info, chosen)),
+        })
+      : null;
     if (missing.length > 0) {
-      const hint = repo
-        ? `; run: ${downloadHint(repo, { revision: requestedRevision, include: prefixed(subfolder, engine.include(info, chosen)) })}`
-        : '';
+      const hint = download ? `; run: ${download}` : '';
       throw notFound(
         `model ${id}:${chosen} is missing ${missing.length} file(s), such as ${missing[0]}${hint}`,
         'model_incomplete'
@@ -130,7 +164,8 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
       engine,
       info,
       files,
-      key: `${id}:${chosen}@${revision ?? 'local'}`,
+      download,
+      key: `${id}:${chosen}@${revision ?? 'local'}${key ? `+${key}` : ''}`,
     };
   }
 
@@ -183,17 +218,7 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
     },
     async list() {
       const models = [...(await hubModels()), ...(await localModels())];
-      return models.map(({ id, found, revision }) => ({
-        id,
-        engine: found.engine.name,
-        capability: found.engine.capability,
-        variants: found.info.variants,
-        defaultVariant: hints[id]?.variant ?? found.info.defaultVariant,
-        revision,
-        inputModalities: found.info.inputModalities,
-        outputModalities: found.info.outputModalities,
-        contextLength: found.info.contextLength,
-      }));
+      return Promise.all(models.map((m) => listEntry(m, hints[m.id])));
     },
   };
 }
