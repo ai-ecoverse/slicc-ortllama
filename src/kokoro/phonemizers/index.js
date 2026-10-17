@@ -4,7 +4,7 @@ import { misaki } from './misaki.js';
 import { phonemizeJs } from './phonemize.js';
 import { xenova } from './xenova.js';
 
-export const PHONEMIZERS = [misaki, espeakNg, phonemizeJs, xenova];
+export const PHONEMIZERS = [misaki, phonemizeJs, espeakNg, xenova];
 
 export const BROKEN_MS = 60_000;
 
