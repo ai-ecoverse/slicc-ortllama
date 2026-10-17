@@ -3,10 +3,6 @@ import { createMel } from './mel.js';
 
 export class LanguageError extends RangeError {}
 
-const RATE = 16000;
-const PRECISION = 0.02;
-const STRIDE = 2;
-
 function abortError(signal) {
   return signal.reason instanceof Error
     ? signal.reason
@@ -55,6 +51,19 @@ function argmax(values) {
   return best;
 }
 
+function languageIds(tokenizer, generation) {
+  if (generation.lang_to_id)
+    return Object.fromEntries(
+      Object.entries(generation.lang_to_id).map(([token, value]) => [token.slice(2, -2), value])
+    );
+  const out = {};
+  for (const code of Object.keys(LANGUAGES)) {
+    const value = tokenizer.id(`<|${code}|>`);
+    if (value !== undefined) out[code] = value;
+  }
+  return out;
+}
+
 export function specialTokens(tokenizer, generation) {
   const id = (name) => tokenizer.id(name);
   const eot = generation.eos_token_id ?? id('<|endoftext|>');
@@ -66,13 +75,8 @@ export function specialTokens(tokenizer, generation) {
     transcribe: generation.task_to_id?.transcribe ?? id('<|transcribe|>'),
     noSpeech: id('<|nospeech|>') ?? id('<|nocaptions|>'),
     noTimestamps,
-    timestampBegin: noTimestamps + 1,
-    languages: Object.fromEntries(
-      Object.entries(generation.lang_to_id ?? {}).map(([token, value]) => [
-        token.slice(2, -2),
-        value,
-      ])
-    ),
+    timestampBegin: id('<|0.00|>') ?? noTimestamps + 1,
+    languages: languageIds(tokenizer, generation),
   };
 }
 
@@ -101,7 +105,13 @@ export function applyTimestampRules(logits, seq, ids, maxInitial) {
   if (stamp > text) logits.fill(Number.NEGATIVE_INFINITY, 0, begin);
 }
 
-export function splitSegments(tokens, begin, offset, windowSeconds) {
+export function splitSegments(
+  tokens,
+  begin,
+  offset,
+  windowSeconds,
+  { precision = 0.02, stride = 2 } = {}
+) {
   const stamp = (t) => t >= begin;
   const single = tokens.length >= 2 && !stamp(tokens.at(-2)) && stamp(tokens.at(-1));
   const cuts = [];
@@ -114,18 +124,18 @@ export function splitSegments(tokens, begin, offset, windowSeconds) {
     for (const cut of cuts) {
       const part = tokens.slice(from, cut);
       segments.push({
-        start: offset + (part[0] - begin) * PRECISION,
-        end: offset + (part.at(-1) - begin) * PRECISION,
+        start: offset + (part[0] - begin) * precision,
+        end: offset + (part.at(-1) - begin) * precision,
         tokens: part,
       });
       from = cut;
     }
-    const advance = single ? null : (tokens[from - 1] - begin) * STRIDE;
+    const advance = single ? null : (tokens[from - 1] - begin) * stride;
     return { segments, advance };
   }
   let duration = windowSeconds;
   const stamps = tokens.filter(stamp);
-  if (stamps.length > 0 && stamps.at(-1) !== begin) duration = (stamps.at(-1) - begin) * PRECISION;
+  if (stamps.length > 0 && stamps.at(-1) !== begin) duration = (stamps.at(-1) - begin) * precision;
   if (tokens.some((t) => !stamp(t)))
     segments.push({ start: offset, end: offset + duration, tokens });
   return { segments, advance: null };
@@ -209,6 +219,8 @@ export function createWhisper({
     feature_size: preprocessor.feature_size ?? config.num_mel_bins,
   });
   const ids = specialTokens(tokenizer, generation);
+  const positions = config.max_source_positions ?? mel.frames / 2;
+  const grid = { precision: mel.samples / mel.rate / positions, stride: mel.frames / positions };
   const textContext = config.max_target_positions ?? 448;
   const sampleLength = Math.floor(textContext / 2);
   const maxInitial = generation.max_initial_timestamp_index ?? 50;
@@ -269,12 +281,13 @@ export function createWhisper({
   }
 
   function windowSegments(result, seek, windowFrames, end, first) {
-    const offset = (seek * mel.hop) / RATE;
+    const offset = (seek * mel.hop) / mel.rate;
     const split = splitSegments(
       result.tokens,
       ids.timestampBegin,
       offset,
-      (windowFrames * mel.hop) / RATE
+      (windowFrames * mel.hop) / mel.rate,
+      grid
     );
     const segments = [];
     for (const s of split.segments) {
@@ -301,7 +314,7 @@ export function createWhisper({
     async transcribe(audio, { language = null, prompt = null, timestamps = true, signal } = {}) {
       let code = checkLanguage(language, multilingual, ids);
       const contentFrames = Math.ceil(audio.length / mel.hop);
-      const end = audio.length / RATE;
+      const end = audio.length / mel.rate;
       const promptTokens = prompt ? tokenizer.encode(` ${String(prompt).trim()}`) : [];
       const all = [];
       const segments = [];

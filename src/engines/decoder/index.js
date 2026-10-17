@@ -138,6 +138,8 @@ export const decoder = {
       profile: profile.name,
       chat: chat.chat,
       render: chat.render,
+      score: chat.score,
+      decode: chat.decode,
       cache: chat.cache,
       async release() {
         chat.cache.clear();
@@ -146,7 +148,7 @@ export const decoder = {
     };
   },
   checkOverrides: () => ({}),
-  async check(instance, { now = () => performance.now() } = {}) {
+  async check(instance, { fixtures, now = () => performance.now() } = {}) {
     const started = now();
     let text = '';
     const result = await instance.chat(
@@ -159,10 +161,55 @@ export const decoder = {
       },
       {
         emit(event) {
-          if (event.type === 'content') text += event.text;
+          if (event.type === 'content' || event.type === 'reasoning') text += event.text;
         },
       }
     );
-    return { ok: text.length > 0, requestMs: now() - started, answer: text, ...result };
+    const smoke = { ok: text.length > 0, requestMs: now() - started, answer: text, ...result };
+    if (!fixtures) return smoke;
+    const scored = [];
+    for (const f of fixtures) scored.push(await instance.score(fixtureRequest(f), f.tokens));
+    const compared = compareLogprobs(scored, fixtures);
+    return {
+      ...smoke,
+      ...compared,
+      summary: `fixtures: ${compared.tokens} tokens, mean |dlogp| ${compared.mean.toFixed(3)}, max ${compared.max.toFixed(3)} (${compared.worstAt}), ${compared.flips.length} changed`,
+      ok: smoke.ok && compared.ok,
+    };
   },
 };
+
+export function fixtureRequest(f) {
+  return {
+    messages: f.messages,
+    tools: [],
+    stop: [],
+    ...(f.reasoning_effort ? { reasoningEffort: f.reasoning_effort } : {}),
+  };
+}
+
+const CLEAR = 1;
+
+export function compareLogprobs(scored, fixtures) {
+  let tokens = 0;
+  let sum = 0;
+  let max = 0;
+  let worstAt = '';
+  const flips = [];
+  scored.forEach((steps, i) => {
+    const f = fixtures[i];
+    steps.forEach((step, j) => {
+      const d = Math.abs(step.logprob - f.logprobs[j]);
+      tokens++;
+      sum += d;
+      if (d > max) {
+        max = d;
+        worstAt = `${f.name}#${j}`;
+      }
+      if (step.top !== f.tokens[j]) flips.push({ at: `${f.name}#${j}`, margin: f.margins[j] });
+    });
+  });
+  const mean = tokens ? sum / tokens : 0;
+  const clear = flips.filter((x) => x.margin > CLEAR);
+  return { tokens, mean, max, worstAt, flips, ok: mean <= 0.15 && clear.length === 0 };
+}

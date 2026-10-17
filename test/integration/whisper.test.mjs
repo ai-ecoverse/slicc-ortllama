@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { after, before, describe, test } from 'node:test';
 import { transcribe } from '@ai-ecoverse/pi-audio';
 import { registerOpenAI } from '@ai-ecoverse/pi-audio/openai';
+import { wordErrorRate } from '../../src/engines/whisper.js';
 import { openCatalog, startServer } from '../../src/index.js';
 import { transcriptionModel } from '../../src/pi-audio.js';
 import { FOX, fixture, foxWav, pcm24 } from './audio.mjs';
 
-const WHISPER = 'onnx-community/whisper-tiny';
+const WHISPER = process.env.ORTLLAMA_TEST_WHISPER ?? 'onnx-community/whisper-tiny';
 
 async function cached() {
   try {
@@ -80,6 +82,33 @@ describe('Whisper transcription through pi-audio', { skip }, () => {
       body: form,
     });
     assert.match((await webm.json()).text.toLowerCase(), FOX);
+  });
+
+  test('decodes a clip longer than 30 seconds in windows and detects languages', async () => {
+    const shipped = new URL('../../fixtures/', import.meta.url);
+    const { fixtures } = JSON.parse(
+      await readFile(new URL('onnx-community/whisper-tiny.json', shipped), 'utf8')
+    );
+    const clip = async (name) => {
+      const form = new FormData();
+      const data = await readFile(new URL(`audio/${name}.wav`, shipped));
+      form.set('file', new Blob([data], { type: 'audio/wav' }), `${name}.wav`);
+      form.set('model', WHISPER);
+      form.set('response_format', 'verbose_json');
+      const response = await fetch(`${server.url}/v1/audio/transcriptions`, {
+        method: 'POST',
+        body: form,
+      });
+      return response.json();
+    };
+    const long = await clip('lighthouse');
+    const text = fixtures.find((f) => f.name === 'lighthouse').text;
+    assert.ok(long.duration > 30);
+    assert.ok(long.segments.at(-1).end > 30);
+    assert.ok(long.segments.some((s) => s.seek > 0));
+    assert.ok(wordErrorRate(text, long.text) < 0.1);
+    assert.equal((await clip('french')).language, 'french');
+    assert.equal((await clip('spanish')).language, 'spanish');
   });
 
   test('answers verbose_json and text, and refuses formats it cannot decode', async () => {
