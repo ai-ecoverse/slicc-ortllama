@@ -1,7 +1,8 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { DEFAULT_ALIASES, ortllamaHome, ROLES, readConfig, writeConfig } from './config.js';
 import { createRuntime, openCatalog, startServer, VERSION } from './index.js';
@@ -18,6 +19,22 @@ Usage:
 Models come from the Hugging Face cache; fill it with hf download.`;
 
 const runFile = (home) => join(home, 'run', 'ortllama.json');
+
+export const FIXTURES = fileURLToPath(new URL('../fixtures/', import.meta.url));
+
+export async function readFixtures(path, { optional = false } = {}) {
+  let text;
+  try {
+    text = await readFile(path, 'utf8');
+  } catch (error) {
+    if (optional && error.code === 'ENOENT') return null;
+    throw error;
+  }
+  const { fixtures, ...about } = JSON.parse(text);
+  for (const f of fixtures)
+    if (f.file) f.audio = (await readFile(join(dirname(path), f.file))).toString('base64');
+  return { path, about, fixtures };
+}
 
 function table(rows) {
   const widths = rows[0].map((_, i) => Math.max(...rows.map((r) => String(r[i]).length)));
@@ -201,9 +218,10 @@ async function check(values, positionals, io) {
   }
   const catalog = await openCatalog({ env: io.env });
   const resolved = await catalog.resolve(id);
-  const fixtures = values.fixtures
-    ? JSON.parse(await readFile(values.fixtures, 'utf8')).fixtures
-    : null;
+  const found = values.fixtures
+    ? await readFixtures(values.fixtures)
+    : await readFixtures(join(io.fixtures, `${resolved.id}.json`), { optional: true });
+  const fixtures = found?.fixtures ?? null;
   const engine = resolved.engine;
   const runtime = io.runtime ?? createRuntime({ env: io.env, keepAlive: '0' });
   const overrides = engine.checkOverrides(fixtures);
@@ -216,6 +234,7 @@ async function check(values, positionals, io) {
     variant: resolved.variant,
     executionProviders: entry.executionProviders,
     loadMs: entry.loadMs,
+    ...(found ? { fixtures: found.path, reference: found.about } : {}),
     ...(await engine.check(entry.instance, { fixtures })),
   };
   await runtime.close();
@@ -224,11 +243,11 @@ async function check(values, positionals, io) {
     io.out.write(
       `${report.id}:${report.variant} on ${report.executionProviders.join(',')}: loaded in ${Math.round(report.loadMs)} ms, request ${Math.round(report.requestMs)} ms\n`
     );
-    if (fixtures && report.summary) io.out.write(`${report.summary}\n`);
-    else if (fixtures)
-      io.out.write(
-        `fixtures: ${report.questions} questions, mean |dp| ${report.mean.toFixed(4)}, max ${report.max.toFixed(4)} (${report.worstAt}), ${report.flips.length} changed\n`
-      );
+    if (report.summary) io.out.write(`${report.summary}\n`);
+    const made = report.reference?.variant;
+    if (made && made !== report.variant)
+      io.out.write(`the fixtures were made with ${made}; other variants can fall outside them\n`);
+    if (!report.ok) io.out.write('check failed\n');
   }
   return report.ok ? 0 : 1;
 }
@@ -244,6 +263,7 @@ export async function main(argv, overrides = {}) {
     signals: process,
     binPath: new URL('./bin.js', import.meta.url).pathname,
     waitSteps: 300,
+    fixtures: FIXTURES,
     ...overrides,
   };
   let parsed;

@@ -43,7 +43,7 @@ In slicc-kernel, `onnxruntime-node` is not needed: the `slicc` export condition 
 | `ortllama ls [--json]` | models in the Hugging Face cache that ortllama can run |
 | `ortllama ps [--json]` | models the running server has loaded |
 | `ortllama alias [role [model]] [--unset role]` | show or set role aliases |
-| `ortllama check <model> [--fixtures file] [--json]` | load a model on this device, time a request, and compare with reference fixtures |
+| `ortllama check <model> [--fixtures file] [--json]` | load a model on this device, time a request, and compare it with reference fixtures: the ones shipped for the model, or `--fixtures file` |
 
 ## APIs
 
@@ -118,6 +118,20 @@ Engines are picked by the files a model has, not by its name. The decoder engine
 
 Model-specific libraries are never installed with ortllama. They are devDependencies here, and engines load them only when a model needs them, such as `@ai-ecoverse/kev.js` for System One and `espeak-ng`, `phonemize` or `phonemizer` for Kokoro. ortllama looks for each library next to itself, then in `ORTLLAMA_MODULE_PATH` (project folders that contain a `node_modules`), then in pnpm's global installs (`$PNPM_HOME/global/…`, including slicc-kernel's `/usr/local/share/pnpm`). A model whose library is missing is still listed, and requests for it answer `501` with code `engine_unavailable` and the package to install.
 
+### Check
+
+`ortllama check` tells whether a model computes on this device what it computes on the reference, a host CPU. ortllama ships fixtures in `fixtures/` for every default model and the other models below that work; `check` picks them by model ID, so `ortllama check chat` compares the Instruct model. A fixture file is `{ "fixtures": [...] }`; audio may be inline base64 (`audio`) or a WAV path relative to the file (`file`). Each engine compares what stays stable across execution providers:
+
+| Engine | Fixtures | Passes when |
+| --- | --- | --- |
+| decoder | 3 prompts, the reference's greedy tokens with their log-probabilities and the margin to the runner-up | the tokens, fed back one by one, keep a mean log-probability within 0.15 nats, and no step with a margin over 1 nat picks another token |
+| systemone | 12 System One requests (plus an image for vision bundles) with their raw decision probabilities | mean change ≤ 0.02, at most 0.25, and no clear answer flips |
+| whisper | 4 clips: `fox.wav`, a 32-second English story, French and Spanish (Kokoro voices, 8 kHz 8-bit) | the language is detected and the word error rate stays within 0.1 of the reference's |
+| kokoro | 3 sentences as token IDs, so the phonemizer does not matter, with a 40-band log-mel summary | the mel spectrogram stays within 2 dB and the length within 5 %; phonemes are compared and reported |
+| silero | speech probabilities for every 32 ms frame of two clips | mean change ≤ 0.01, at most 0.1, and no clear speech/silence flip |
+
+The tolerances leave room over what WebGPU differs from CPU, measured on host Node and in slicc-kernel (both alike): decoder mean 0.026–0.053 nats (max 0.4, flips only below a 0.2 margin), System One mean 0.006 (max 0.027), Kokoro 0.15–0.24 dB, Whisper and Silero none. Kokoro's `q8` variant lands at 2–5 dB and its `fp16` on WebGPU, which sounds garbled, at 25 dB. Fixtures hold the default variant; other variants can fall outside them, and `check` says so. `node scripts/fixtures.mjs <model>…` writes them on the host CPU (`node scripts/fixtures.mjs audio` makes the clips with Kokoro).
+
 ## Configuration
 
 | Variable | Default | |
@@ -138,4 +152,4 @@ Model-specific libraries are never installed with ortllama. They are devDependen
 
 ## Develop
 
-Node ≥ 24. `npm run lint` runs `slicc-lint`. `npm test` runs the integration tests; the Kev, Whisper, realtime, chat, reasoning, image and Kokoro tests run when `ai-ecoverse/kev.js/kev-0.8b`, `onnx-community/whisper-tiny`, `onnx-community/silero-vad`, `mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16` (with its vision encoder), `ai-ecoverse/Ministral-3-3B-Reasoning-2512-ONNX:q4f16`, `ai-ecoverse/kev.js/kev-0.8b-vision` and `onnx-community/Kokoro-82M-v1.0-ONNX` are in the Hugging Face cache (`ORTLLAMA_REQUIRE_MODEL=1` makes a missing model a failure). Unit tests stay local in `test/unit/` (`npm run test:unit`). Releases use semantic-release on `main`.
+Node ≥ 24. `npm run lint` runs `slicc-lint`. `npm test` runs the integration tests; the Kev, Whisper, realtime, chat, reasoning, image and Kokoro tests run when `ai-ecoverse/kev.js/kev-0.8b`, `onnx-community/whisper-tiny`, `onnx-community/silero-vad`, `mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16` (with its vision encoder), `ai-ecoverse/Ministral-3-3B-Reasoning-2512-ONNX:q4f16`, `ai-ecoverse/kev.js/kev-0.8b-vision` and `onnx-community/Kokoro-82M-v1.0-ONNX` are in the Hugging Face cache (`ORTLLAMA_REQUIRE_MODEL=1` makes a missing model a failure). `ORTLLAMA_TEST_WHISPER` runs the Whisper and realtime tests on another Whisper model, such as `onnx-community/whisper-base`. Unit tests stay local in `test/unit/` (`npm run test:unit`). Releases use semantic-release on `main`.

@@ -172,23 +172,27 @@ whisper.check = async (instance, { fixtures, now = () => performance.now() } = {
   for (const f of fixtures) {
     const audio = toMono16k(new Uint8Array(Buffer.from(f.audio, 'base64')), f.type ?? 'audio/wav');
     const t = now();
-    const got = await instance.transcribe(audio, { language: f.language });
+    const got = await instance.transcribe(audio, { language: f.detect ? null : f.language });
     const ms = now() - t;
+    const wer = wordErrorRate(f.text, got.text);
     results.push({
       name: f.name,
-      wer: wordErrorRate(f.text, got.text),
+      wer,
       text: got.text,
+      language: got.language,
       rtf: ms / 1000 / (audio.length / 16000),
+      ok: wer <= (f.wer ?? 0.1) + 0.1 && (!f.detect || got.language === f.detect),
     });
   }
   const worst = results.reduce((a, b) => (b.wer > a.wer ? b : a), results[0]);
   const mean = results.reduce((s, r) => s + r.wer, 0) / Math.max(1, results.length);
+  const wrong = results.filter((r) => !r.ok).map((r) => r.name);
   return {
     requestMs,
     rtf,
     answer,
     results,
-    summary: `fixtures: ${results.length} clips, mean WER ${mean.toFixed(3)}, worst ${worst?.wer.toFixed(3) ?? '0'} (${worst?.name ?? '-'})`,
-    ok: results.every((r) => r.wer <= 0.2),
+    summary: `fixtures: ${results.length} clips, mean WER ${mean.toFixed(3)}, worst ${worst?.wer.toFixed(3) ?? '0'} (${worst?.name ?? '-'})${wrong.length > 0 ? `, failed ${wrong.join(', ')}` : ''}`,
+    ok: wrong.length === 0,
   };
 };

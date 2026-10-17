@@ -3,6 +3,7 @@ import { badRequest } from '../http/errors.js';
 import { loadPhonemizers, phonemizerOrder } from '../kokoro/phonemizers/index.js';
 import { fixPhonemes, normalizeEnglish, splitPunctuation } from '../kokoro/text.js';
 import { DEFAULT_VOICE, LANGUAGES, VOICES } from '../kokoro/voices.js';
+import { createMel } from '../whisper/mel.js';
 
 export const SAMPLE_RATE = 24000;
 
@@ -180,9 +181,72 @@ kokoro.checkOverrides = () => ({});
 const SMOKE =
   'Kokoro speaks from the Hugging Face cache. This sentence checks that the voice sounds right.';
 
+const BANDS = 40;
+const RANGE = 2;
+const LEVELS = 254;
+const DB = 40 * RANGE;
+
+export function spectrum(samples, rate = SAMPLE_RATE) {
+  const hop = rate / 50;
+  const frames = Math.max(1, Math.ceil(samples.length / hop));
+  const mel = createMel({
+    feature_size: BANDS,
+    sampling_rate: rate,
+    hop_length: hop,
+    n_fft: hop * 2,
+    nb_max_frames: frames,
+  });
+  const values = mel.compute(samples);
+  const floor = values.reduce((m, v) => Math.max(m, v), Number.NEGATIVE_INFINITY) - RANGE;
+  const levels = Uint8Array.from(values, (v) => Math.round(((v - floor) / RANGE) * LEVELS));
+  return { frames, bands: BANDS, mel: Buffer.from(levels).toString('base64') };
+}
+
+export function spectralDistance(got, ref) {
+  const a = Buffer.from(got.mel, 'base64');
+  const b = Buffer.from(ref.mel, 'base64');
+  const frames = Math.min(got.frames, ref.frames);
+  let sum = 0;
+  for (let m = 0; m < ref.bands; m++)
+    for (let t = 0; t < frames; t++) sum += Math.abs(a[m * got.frames + t] - b[m * ref.frames + t]);
+  return {
+    db: (sum / (frames * ref.bands) / LEVELS) * DB,
+    length: got.frames / ref.frames,
+  };
+}
+
+async function phonemesOf(instance, f) {
+  try {
+    return (await instance.phonemes(f.text, f.voice[0])) === f.phonemes;
+  } catch {
+    return null;
+  }
+}
+
+async function compareSpeech(instance, fixtures, now) {
+  const results = [];
+  for (const f of fixtures) {
+    const t = now();
+    const audio = await instance.synthesize(f.ids, { voice: f.voice, speed: f.speed ?? 1 });
+    const ms = now() - t;
+    results.push({
+      name: f.name,
+      ...spectralDistance(spectrum(audio), f),
+      phonemes: await phonemesOf(instance, f),
+      rtf: ms / 1000 / (audio.length / SAMPLE_RATE),
+    });
+  }
+  const worst = results.reduce((a, b) => (b.db > a.db ? b : a), results[0]);
+  const mean = results.reduce((s, r) => s + r.db, 0) / Math.max(1, results.length);
+  const same = results.filter((r) => r.phonemes).length;
+  return {
+    results,
+    summary: `fixtures: ${results.length} sentences, mean mel distance ${mean.toFixed(2)} dB, worst ${worst?.db.toFixed(2) ?? '0'} dB (${worst?.name ?? '-'}), phonemes match on ${same}`,
+    ok: results.every((r) => r.db <= 2 && Math.abs(r.length - 1) <= 0.05),
+  };
+}
+
 kokoro.check = async (instance, { fixtures, now = () => performance.now() } = {}) => {
-  if (fixtures)
-    throw new Error('kokoro has no reference fixtures; run ortllama check without --fixtures');
   const started = now();
   let samples = 0;
   let peak = 0;
@@ -192,11 +256,14 @@ kokoro.check = async (instance, { fixtures, now = () => performance.now() } = {}
   }
   const requestMs = now() - started;
   const audioSeconds = samples / SAMPLE_RATE;
-  return {
+  const smoke = {
     ok: audioSeconds > 2 && peak > 0.01,
     requestMs,
     audioSeconds,
     realTimeFactor: requestMs / 1000 / audioSeconds,
     peak,
   };
+  if (!fixtures) return smoke;
+  const compared = await compareSpeech(instance, fixtures, now);
+  return { ...smoke, ...compared, ok: smoke.ok && compared.ok };
 };

@@ -1,5 +1,6 @@
 import { posix } from 'node:path';
 import { badRequest, HttpError } from '../http/errors.js';
+import { imageFromUrl } from '../images.js';
 import { optional } from './optional.js';
 
 export const KEV = '@ai-ecoverse/kev.js';
@@ -74,7 +75,7 @@ export const systemone = {
       ...overrides,
     });
     return {
-      probs: (record) => kev.probs(record),
+      probs: (record, image) => kev.probs(record, image),
       async systemOne(request) {
         if (request.image !== undefined && !kev.acceptsImages)
           throw badRequest('this System One model takes no images', 'image');
@@ -161,6 +162,15 @@ systemone.check = async (instance, { fixtures, now = () => performance.now() } =
   const requestMs = now() - started;
   if (!fixtures) return { ok: true, requestMs, answer };
   const results = [];
-  for (const f of fixtures) results.push(await instance.probs(f.record));
-  return { requestMs, answer, ...compareFixtures(results, fixtures) };
+  for (const f of fixtures) {
+    const image = f.image ? await imageFromUrl(f.image, { param: 'image' }) : undefined;
+    results.push(await instance.probs(f.record, image));
+  }
+  const compared = compareFixtures(results, fixtures);
+  return {
+    requestMs,
+    answer,
+    ...compared,
+    summary: `fixtures: ${compared.questions} questions, mean |dp| ${compared.mean.toFixed(4)}, max ${compared.max.toFixed(4)} (${compared.worstAt}), ${compared.flips.length} changed`,
+  };
 };
