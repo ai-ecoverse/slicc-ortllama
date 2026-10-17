@@ -7,7 +7,13 @@ const KEY_PROTOCOL = 'openai-insecure-api-key.';
 const MAX_PAYLOAD = 16 * 1024 * 1024;
 const MAX_FRAGMENTS = 1024;
 const IDLE_MS = 60_000;
-const REASONS = { 400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not Found' };
+const REASONS = {
+  400: 'Bad Request',
+  401: 'Unauthorized',
+  403: 'Forbidden',
+  404: 'Not Found',
+  503: 'Service Unavailable',
+};
 
 function protocolsOf(req) {
   return (req.headers['sec-websocket-protocol'] ?? '')
@@ -74,6 +80,7 @@ export function attachRealtime(server, { catalog, runtime, idleMs = IDLE_MS, ...
     handleProtocols: (protocols) => (protocols.has('realtime') ? 'realtime' : false),
   });
   const sessions = new Map();
+  let closing = false;
   const connect = (ws) => {
     const session = new RealtimeSession({
       catalog,
@@ -96,6 +103,10 @@ export function attachRealtime(server, { catalog, runtime, idleMs = IDLE_MS, ...
     session.start();
   };
   server.on('upgrade', (req, socket, head) => {
+    if (closing) {
+      refuse(socket, new HttpError(503, 'the server is shutting down', { code: 'server_closing' }));
+      return;
+    }
     const problem = checkUpgrade(req, options);
     if (problem) {
       refuse(socket, problem);
@@ -106,6 +117,7 @@ export function attachRealtime(server, { catalog, runtime, idleMs = IDLE_MS, ...
   return {
     sessions,
     async close() {
+      closing = true;
       const open = [...sessions];
       await Promise.all(open.map(([, session]) => session.close()));
       for (const [ws] of open) ws.terminate();
