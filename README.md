@@ -54,7 +54,7 @@ curl -s localhost:11435/v1/audio/transcriptions -F file=@clip.wav -F response_fo
 | Command | |
 | --- | --- |
 | `ortllama serve [--port N] [--host H] [--detach]` | start the server (default `127.0.0.1:11435`); `--detach` runs it in the background |
-| `ortllama ls [--json]` | models in the Hugging Face cache that ortllama can run |
+| `ortllama ls [--json]` | models in the Hugging Face cache that ortllama can run; cached repos and `ORTLLAMA_MODEL_PATH` folders with ONNX files in a layout it does not recognize are noted on stderr |
 | `ortllama ps [--json]` | models the running server has loaded |
 | `ortllama alias [role [model]] [--unset role]` | show or set [role aliases](#roles) |
 | `ortllama check <model> [--fixtures file] [--json]` | load a model on this device, time a request, and compare it with [reference fixtures](#check): the ones shipped for the model, or `--fixtures file` |
@@ -191,7 +191,7 @@ for await (const event of speak(model, { text: 'Hello.', voice: 'af_heart' }, { 
 
 ## Models
 
-ortllama downloads nothing. It reads the Hugging Face cache that [`hf download`](https://huggingface.co/docs/huggingface_hub/guides/cli) fills (`HF_HUB_CACHE`, else `HF_HOME/hub`, else `~/.cache/huggingface/hub`), through its `refs/` and `snapshots/`. A model ID is a Hub ID: `org/repo[/subfolder][@revision][:variant]`, such as `ai-ecoverse/kev.js/kev-0.8b:q8f32`. A model that isn't cached, or a cached variant with missing files, is answered with `404` and the `hf download` command that fetches it; a variant that isn't cached at all is answered with `404` and the variants that are, and a cached repo with no ONNX model ortllama can run, such as an MLX or PyTorch checkpoint, with `404` and no download command.
+ortllama downloads nothing. It reads the Hugging Face cache that [`hf download`](https://huggingface.co/docs/huggingface_hub/guides/cli) fills (`HF_HUB_CACHE`, else `HF_HOME/hub`, else `~/.cache/huggingface/hub`), through its `refs/` and `snapshots/`. A model ID is a Hub ID: `org/repo[/subfolder][@revision][:variant]`, such as `ai-ecoverse/kev.js/kev-0.8b:q8f32`. A model that isn't cached, or a cached variant with missing files, is answered with `404` and the `hf download` command that fetches it; a variant that isn't cached at all is answered with `404` and the variants that are, and a cached repo with no ONNX model ortllama can run, such as an MLX or PyTorch checkpoint, with `404` and no download command. When such a repo, subfolder or `ORTLLAMA_MODEL_PATH` folder does have `.onnx` files at its top, in `onnx/`, or in a subfolder that is not itself a model ortllama runs (or that subfolder's `onnx/`), such as a new export with a quantization suffix no engine knows (`onnx/decoder_model_merged_int4.onnx`) or a lone `model.onnx`, the `404` names up to three of them and points at the layouts under [Engines](#engines). `ortllama ls` notes such repos and `ORTLLAMA_MODEL_PATH` folders on stderr, but not the subfolders of one ortllama runs.
 
 ### Roles
 

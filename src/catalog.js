@@ -13,6 +13,8 @@ import { modelFiles } from './hf/files.js';
 import { badRequest, notFound } from './http/errors.js';
 
 const SAFE = /^[A-Za-z0-9._/:@=-]+$/;
+const LAYOUTS = 'https://github.com/ai-ecoverse/slicc-ortllama#engines';
+const NAMED = 3;
 
 const quote = (word) => `'${word.replaceAll("'", "'\\''")}'`;
 
@@ -32,6 +34,30 @@ function prefixed(subfolder, patterns) {
 
 function snapshotFiles(cache, repo, snapshot) {
   return modelFiles(snapshot, { allow: [snapshot, join(repoDir(cache, repo), 'blobs')] });
+}
+
+async function onnxIn(files, dir) {
+  const names = (await files.list(dir)).filter((n) => n.endsWith('.onnx')).sort();
+  return names.map((n) => (dir ? `${dir}/${n}` : n));
+}
+
+async function strayOnnx(files, runnable) {
+  const out = [...(await onnxIn(files, '')), ...(await onnxIn(files, 'onnx'))];
+  for (const dir of await files.dirs()) {
+    if (dir === 'onnx') continue;
+    const found = [...(await onnxIn(files, dir)), ...(await onnxIn(files, `${dir}/onnx`))];
+    if (found.length > 0 && !(await runnable(dir))) out.push(...found);
+  }
+  return out;
+}
+
+function unrunnable(id, where, onnx) {
+  if (onnx.length === 0)
+    return notFound(`model ${id} is ${where}, but has no ONNX model ortllama can run`);
+  const more = onnx.length > NAMED ? ` and ${onnx.length - NAMED} more` : '';
+  return notFound(
+    `model ${id} is ${where}, but ortllama does not recognize the layout of its ONNX files (${onnx.slice(0, NAMED).join(', ')}${more}); the layouts it runs are listed in ${LAYOUTS}`
+  );
 }
 
 export function localRoots(env = process.env) {
@@ -85,52 +111,69 @@ async function listEntry({ id, files, found, revision }, hint) {
   };
 }
 
+const detectedIn = (files, engines) => (dir) => detectEngine(files.sub(dir), engines);
+
+async function explore(engines, { id, files, subId, revision, where }) {
+  const found = await detectEngine(files, engines);
+  if (found) return [{ id, files, found, revision, where, root: true }];
+  const runnable = new Set();
+  const out = [
+    { id, files, found, revision, where, root: true, runnable: async (d) => runnable.has(d) },
+  ];
+  for (const dir of await files.dirs()) {
+    const sub = files.sub(dir);
+    const hit = await detectEngine(sub, engines);
+    if (hit) runnable.add(dir);
+    const entry = { id: subId(dir), files: sub, found: hit, revision, where, root: false };
+    out.push({ ...entry, runnable: detectedIn(sub, engines) });
+  }
+  return out;
+}
+
+async function localDirs(modelPath, engines) {
+  const out = [];
+  for (const root of modelPath) {
+    if (!(await isDir(root))) continue;
+    const id = `local/${basename(root)}`;
+    const where = 'in ORTLLAMA_MODEL_PATH';
+    const subId = (dir) => `local/${dir}`;
+    out.push(
+      ...(await explore(engines, { id, files: modelFiles(root), subId, revision: null, where }))
+    );
+  }
+  return out;
+}
+
+async function hubDirs(cache, engines) {
+  const out = [];
+  for (const repo of await cachedRepos(cache)) {
+    const rev = await resolveRevision(cache, repo);
+    if (!rev) continue;
+    const files = snapshotFiles(cache, repo, rev.snapshot);
+    const subId = (dir) => `${repo}/${dir}`;
+    out.push(
+      ...(await explore(engines, {
+        id: repo,
+        files,
+        subId,
+        revision: rev.sha,
+        where: 'in the cache',
+      }))
+    );
+  }
+  return out;
+}
+
 export function createCatalog({ cache, home, config, modelPath = [], engines = ENGINES }) {
   const aliases = aliasesOf(config);
   const hints = config.hints ?? {};
 
-  async function localModels() {
-    const out = [];
-    for (const root of modelPath) {
-      if (!(await isDir(root))) continue;
-      const files = modelFiles(root);
-      const found = await detectEngine(files, engines);
-      if (found) {
-        out.push({ id: `local/${basename(root)}`, files, found, revision: null });
-        continue;
-      }
-      for (const dir of await files.dirs()) {
-        const sub = files.sub(dir);
-        const hit = await detectEngine(sub, engines);
-        if (hit) out.push({ id: `local/${dir}`, files: sub, found: hit, revision: null });
-      }
-    }
-    return out;
-  }
-
-  async function hubModels() {
-    const out = [];
-    for (const repo of await cachedRepos(cache)) {
-      const rev = await resolveRevision(cache, repo);
-      if (!rev) continue;
-      const files = snapshotFiles(cache, repo, rev.snapshot);
-      const found = await detectEngine(files, engines);
-      if (found) {
-        out.push({ id: repo, files, found, revision: rev.sha });
-        continue;
-      }
-      for (const dir of await files.dirs()) {
-        const sub = files.sub(dir);
-        const hit = await detectEngine(sub, engines);
-        if (hit) out.push({ id: `${repo}/${dir}`, files: sub, found: hit, revision: rev.sha });
-      }
-    }
-    return out;
-  }
-
   async function resolveLocal(id, variant) {
-    const match = (await localModels()).find((m) => m.id === id);
+    const dirs = (await localDirs(modelPath, engines)).filter((m) => m.id === id);
+    const match = dirs.find((m) => m.found) ?? dirs.find((m) => m.root) ?? dirs[0];
     if (!match) throw notFound(`model ${id} is not in ORTLLAMA_MODEL_PATH`);
+    if (!match.found)
+      throw unrunnable(id, match.where, await strayOnnx(match.files, match.runnable));
     return finish({
       id,
       files: match.files,
@@ -140,6 +183,20 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
       repo: null,
       subfolder: '',
     });
+  }
+
+  async function survey() {
+    const dirs = [...(await hubDirs(cache, engines)), ...(await localDirs(modelPath, engines))];
+    const models = await Promise.all(
+      dirs.filter((m) => m.found).map((m) => listEntry(m, hints[m.id]))
+    );
+    const unrecognized = [];
+    for (const m of dirs) {
+      if (!m.root || m.found) continue;
+      const onnx = await strayOnnx(m.files, m.runnable);
+      if (onnx.length > 0) unrecognized.push(unrunnable(m.id, m.where, onnx).message);
+    }
+    return { models, unrecognized };
   }
 
   async function finish({
@@ -225,7 +282,7 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
         );
       const found = await detectEngine(files, engines);
       if (!found)
-        throw notFound(`model ${id} is in the cache, but has no ONNX model ortllama can run`);
+        throw unrunnable(id, 'in the cache', await strayOnnx(files, detectedIn(files, engines)));
       const resolved = await finish({
         id,
         files,
@@ -239,8 +296,8 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
       return { ...resolved, alias: target === requested ? null : requested };
     },
     async list() {
-      const models = [...(await hubModels()), ...(await localModels())];
-      return Promise.all(models.map((m) => listEntry(m, hints[m.id])));
+      return (await survey()).models;
     },
+    survey,
   };
 }

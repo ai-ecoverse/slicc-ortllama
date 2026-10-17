@@ -84,6 +84,9 @@ export function modelFiles(root, { allow = [root] } = {}) {
       }
       return out.sort();
     },
+    async list(rel) {
+      return listDir(await real(rel).catch(() => ''));
+    },
     async bytes(patterns) {
       const seen = new Set();
       let total = 0;
