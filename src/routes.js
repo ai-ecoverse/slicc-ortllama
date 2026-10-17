@@ -54,7 +54,7 @@ export function createRoutes({ catalog, runtime, version, maxTokens }) {
         const result = await runtime.use(
           resolved,
           PRIORITY.decisions,
-          (kev) => kev.systemOne(request),
+          (instance) => instance.systemOne(request),
           signal
         );
         return { ...result, model: model ?? 'decisions' };

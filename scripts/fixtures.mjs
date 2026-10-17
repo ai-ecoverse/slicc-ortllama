@@ -3,6 +3,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { toRecord } from '@ai-ecoverse/kev.js';
 import { resample, toMono16k } from '../src/audio/pcm.js';
+import { toRecord as decisionRecord } from '../src/engines/decisions.js';
 import { fixtureRequest } from '../src/engines/decoder/index.js';
 import { spectrum } from '../src/engines/kokoro.js';
 import { speechProbabilities } from '../src/engines/silero.js';
@@ -212,13 +213,17 @@ async function decoderFixtures(instance) {
   return out;
 }
 
-async function systemoneFixtures(instance, resolved) {
+async function systemoneFixtures(instance, resolved, recordOf = toRecord, minOptions = 1) {
   const requests = JSON.parse(
     await readFile(new URL('./systemone-requests.json', import.meta.url), 'utf8')
   );
   const out = [];
+  const usable = (request) => {
+    const { record } = recordOf(request);
+    return { ...record, questions: record.questions.filter((q) => q.options.length >= minOptions) };
+  };
   for (const { name, request } of requests) {
-    const { record } = toRecord(request);
+    const record = usable(request);
     out.push({
       name,
       record,
@@ -228,7 +233,7 @@ async function systemoneFixtures(instance, resolved) {
   if (resolved.info.inputModalities.includes('image')) {
     const image = `data:image/png;base64,${(await readFile(RED_CIRCLE)).toString('base64')}`;
     for (const { name, request } of VISION) {
-      const { record } = toRecord(request);
+      const record = usable(request);
       const probs = await instance.probs(record, await imageFromUrl(image, { param: 'image' }));
       out.push({ name, record, image, probs: probs.map((q) => q.map((p) => +p.toFixed(5))) });
     }
@@ -242,6 +247,7 @@ const BUILDERS = {
   kokoro: kokoroFixtures,
   decoder: decoderFixtures,
   systemone: systemoneFixtures,
+  jev: (instance, resolved) => systemoneFixtures(instance, resolved, decisionRecord, 2),
 };
 
 async function fixturesFor(id) {
