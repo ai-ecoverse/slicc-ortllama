@@ -1,7 +1,7 @@
 import { Template } from '@huggingface/jinja';
 import { badRequest, HttpError } from '../../http/errors.js';
 import { createPrefixCache } from './prefix.js';
-import { checkTools, escaper } from './profiles.js';
+import { checkTools, DIRECT_ANSWER, escaper } from './profiles.js';
 import { createRng, pick } from './sample.js';
 import { createParser, stopFilter } from './stream.js';
 import { expandImages, requestImages, splicer } from './vision.js';
@@ -41,6 +41,14 @@ function summary(ids, run, times, vision) {
       ...(vision.images > 0 ? { image_n: vision.images, image_ms: vision.ms } : {}),
     },
   };
+}
+
+const INSTRUCTIONS = new Set(['system', 'developer']);
+
+export function directMessages(request, thinks) {
+  if (request.reasoningEffort !== 'none' || !thinks || INSTRUCTIONS.has(request.messages[0]?.role))
+    return request.messages;
+  return [{ role: 'system', content: DIRECT_ANSWER }, ...request.messages];
 }
 
 function samplingFor(request, defaults, banned) {
@@ -85,6 +93,7 @@ export function createChat({
   const markers = Object.fromEntries(Object.entries(profile.markers).map(([k, v]) => [k, idOf(v)]));
   const eosIds = new Set([...eos, idOf(eosToken)].filter((x) => x !== null));
   const compiled = new Template(profile.template(template));
+  const thinks = profile.thinksByDefault(template);
   const cache = createPrefixCache({
     model,
     maxEntries: 2,
@@ -93,7 +102,7 @@ export function createChat({
   const decode = (ids) => tokenizer.decode(ids, { skip_special_tokens: false });
 
   function render(request) {
-    const messages = profile.messages(request.messages, esc);
+    const messages = profile.messages(directMessages(request, thinks), esc);
     const tools = request.tools.length > 0 ? esc.deep(request.tools) : undefined;
     let text;
     try {

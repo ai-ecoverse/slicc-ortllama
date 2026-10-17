@@ -160,7 +160,9 @@ describe('chat completions on Ministral 3 Reasoning through pi-ai', { skip }, ()
     });
     assert.equal(response.status, 200);
     const { choices } = await response.json();
+    assert.equal(choices[0].finish_reason, 'stop', JSON.stringify(choices[0]));
     assert.equal(choices[0].message.reasoning_content, undefined);
-    assert.match(choices[0].message.content, /Paris/);
+    assert.doesNotMatch(choices[0].message.content, /<\/?think/i);
+    assert.match(choices[0].message.content.trim(), /^\W*Paris\W*$/);
   });
 });
