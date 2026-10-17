@@ -58,7 +58,8 @@
     "fast-png": "8.0.0",
     "fflate": "0.8.3",
     "jpeg-js": "0.4.4",
-    "onnxruntime-web": "1.30.0"
+    "onnxruntime-web": "1.30.0",
+    "ws": "8.22.0"
   },
   "bin": {
     "ortllama": "src/bin.js"

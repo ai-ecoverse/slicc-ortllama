@@ -1,9 +1,12 @@
+import { WebSocketServer } from 'ws';
 import { errorBody, HttpError } from '../http/errors.js';
 import { allowedHost, allowedOrigin, authorized } from '../http/server.js';
 import { RealtimeSession } from './session.js';
-import { upgrade } from './websocket.js';
 
 const KEY_PROTOCOL = 'openai-insecure-api-key.';
+const MAX_PAYLOAD = 16 * 1024 * 1024;
+const MAX_FRAGMENTS = 1024;
+const IDLE_MS = 60_000;
 const REASONS = { 400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not Found' };
 
 function protocolsOf(req) {
@@ -49,34 +52,56 @@ function refuse(socket, error) {
   );
 }
 
-export function attachRealtime(server, { catalog, runtime, ...options }) {
+function closeWhenIdle(ws, ms) {
+  let timer = null;
+  const touch = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => ws.close(1000, 'idle'), ms);
+    timer.unref?.();
+  };
+  for (const event of ['message', 'ping', 'pong']) ws.on(event, touch);
+  ws.on('close', () => clearTimeout(timer));
+  touch();
+}
+
+export function attachRealtime(server, { catalog, runtime, idleMs = IDLE_MS, ...options }) {
+  const wss = new WebSocketServer({
+    noServer: true,
+    clientTracking: false,
+    perMessageDeflate: false,
+    maxPayload: MAX_PAYLOAD,
+    maxFragments: MAX_FRAGMENTS,
+    handleProtocols: (protocols) => (protocols.has('realtime') ? 'realtime' : false),
+  });
   const sessions = new Map();
+  const connect = (ws) => {
+    const session = new RealtimeSession({
+      catalog,
+      runtime,
+      send: (event) => {
+        if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(event));
+      },
+    });
+    sessions.set(ws, session);
+    closeWhenIdle(ws, idleMs);
+    ws.on('message', (data, binary) => {
+      if (binary)
+        session.fail(new HttpError(400, 'events must be JSON text', { code: 'invalid_event' }));
+      else session.receive(data.toString('utf8'));
+    });
+    ws.on('error', () => {});
+    ws.on('close', () => {
+      session.close().finally(() => sessions.delete(ws));
+    });
+    session.start();
+  };
   server.on('upgrade', (req, socket, head) => {
     const problem = checkUpgrade(req, options);
     if (problem) {
       refuse(socket, problem);
       return;
     }
-    const ws = upgrade(req, socket, head, { protocols: ['realtime'], idleMs: options.idleMs });
-    if (!ws) {
-      refuse(socket, new HttpError(400, 'the request is not a WebSocket upgrade'));
-      return;
-    }
-    const session = new RealtimeSession({
-      catalog,
-      runtime,
-      send: (event) => ws.send(JSON.stringify(event)),
-    });
-    sessions.set(ws, session);
-    ws.on('message', (data, binary) => {
-      if (binary)
-        session.fail(new HttpError(400, 'events must be JSON text', { code: 'invalid_event' }));
-      else session.receive(data);
-    });
-    ws.on('close', () => {
-      session.close().finally(() => sessions.delete(ws));
-    });
-    session.start();
+    wss.handleUpgrade(req, socket, head, connect);
   });
   return {
     sessions,
