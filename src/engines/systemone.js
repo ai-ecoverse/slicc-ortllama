@@ -5,6 +5,33 @@ import { optional } from './optional.js';
 
 export const KEV = '@ai-ecoverse/kev.js';
 
+const HELD_BYTES = 2 ** 30;
+
+export function heldReads(files, budget = HELD_BYTES) {
+  const held = new Map();
+  let bytes = 0;
+  const read = (rel, offset, length) => {
+    let data = held.get(rel);
+    if (data) held.delete(rel);
+    else {
+      data = files.readSync(rel);
+      bytes += data.length;
+      for (const [name, old] of held) {
+        if (bytes <= budget) break;
+        held.delete(name);
+        bytes -= old.length;
+      }
+    }
+    held.set(rel, data);
+    return data.subarray(offset, offset + length);
+  };
+  const clear = () => {
+    held.clear();
+    bytes = 0;
+  };
+  return { read, clear };
+}
+
 async function manifestOf(files) {
   if (!(await files.exists('manifest.json'))) return null;
   try {
@@ -69,14 +96,17 @@ export const systemone = {
   },
   async load({ backend, files, variant, overrides = {}, library = () => optional(KEV) }) {
     const { loadKev, ValidationError, ContextOverflow } = await library();
+    const node = backend.track === 'node';
+    const reads = node ? null : heldReads(files);
     const kev = await loadKev((rel) => files.read(rel), {
+      ...(node ? { filePath: (rel) => files.path(rel) } : { readSync: reads.read }),
       ort: backend.ort,
       variant,
       executionProviders: backend.executionProviders,
       sessionOptions: backend.sessionOptions,
       cacheName: null,
       ...overrides,
-    });
+    }).finally(() => reads?.clear());
     return {
       probs: (record, image) => kev.probs(record, image),
       async systemOne(request) {
