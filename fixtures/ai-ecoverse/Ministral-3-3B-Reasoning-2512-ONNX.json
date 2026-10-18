@@ -1,7 +1,7 @@
 {
   "model": "ai-ecoverse/Ministral-3-3B-Reasoning-2512-ONNX",
   "variant": "q4f16",
-  "revision": "832c31b0ea941a303a3b29974c057a5ed9adfcae",
+  "revision": "c5924472c1038bcc5ae6a3a50fc2d7850cddfa38",
   "executionProviders": ["cpu"],
   "generator": "scripts/fixtures.mjs",
   "fixtures": [
