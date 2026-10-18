@@ -1,0 +1,57 @@
+{
+  "model": "ai-ecoverse/Ministral-3-14B-Instruct-2512-ONNX",
+  "variant": "q4f16",
+  "revision": "0cb905fcf859c1cb540a8113aebaf456b74bdd72",
+  "executionProviders": ["cpu"],
+  "generator": "scripts/fixtures.mjs",
+  "fixtures": [
+    {
+      "name": "capital",
+      "messages": [
+        { "role": "user", "content": "What is the capital of France? Answer in one sentence." }
+      ],
+      "text": "The capital of France is **Paris**.",
+      "tokens": [1784, 8961, 1307, 5498, 1395, 1603, 42572, 12617],
+      "logprobs": [-0.0031, 0, 0, -0.0008, -0.0002, -0.002, -0.0005, -0.0023],
+      "margins": [6.578, 10.766, 11.5, 7.297, 9.578, 6.266, 8.148, 6.469]
+    },
+    {
+      "name": "haiku",
+      "messages": [
+        { "role": "system", "content": "You are a helpful assistant." },
+        { "role": "user", "content": "Write a haiku about autumn leaves." }
+      ],
+      "text": "Golden whispers fall,\nDancing crimson, orange, gold—\nEarth wears a fleeting veil.",
+      "tokens": [
+        74059, 110027, 6962, 1520, 123894, 2989, 76808, 1044, 32300, 1044, 10634, 1674, 1010, 99701,
+        81423, 1261, 11565, 17870, 113504, 1046
+      ],
+      "logprobs": [
+        -0.6105, -0.1657, -0.1808, -0.0401, -1.3606, -0.6104, -0.0077, -0.7441, -0.6046, -1.122,
+        -0.3618, -0.0259, -0.0001, -0.4579, -1.5494, -0.7938, -0.4798, -0.1789, -1.2041, -0.0064
+      ],
+      "margins": [
+        1.125, 3.672, 1.875, 3.313, 0.297, 1.367, 5.672, 0.328, 1.555, 0.945, 1.469, 4.266, 10.883,
+        1.25, 0.016, 0.477, 1.375, 1.641, 0.547, 5.469
+      ]
+    },
+    {
+      "name": "math",
+      "messages": [{ "role": "user", "content": "What is 17 times 23? Show the steps briefly." }],
+      "text": "Here’s the calculation of **17 × 23** step by step:\n\n1. **Break down 2",
+      "tokens": [
+        11745, 2190, 1278, 22028, 1307, 1603, 1049, 1055, 10039, 1032, 1050, 1051, 1438, 5966, 1536,
+        5966, 2100, 1049, 1046, 1603, 52810, 3151, 1032, 1050
+      ],
+      "logprobs": [
+        -0.4465, -0.8176, -0.1762, -0.4437, -0.1625, -0.118, -0.0002, 0, -0.0021, 0, 0, 0, -0.1004,
+        -0.8568, -0.1033, -0.0005, -0.0273, -0.0441, -0.0001, -0.613, -0.2436, -0.4209, -0.166,
+        -0.0315
+      ],
+      "margins": [
+        0.906, 0.594, 2.266, 1.063, 2.281, 2.734, 9.078, 11.891, 6.203, 16.484, 11.094, 10.852,
+        2.672, 0.281, 2.219, 9.094, 3.813, 3.219, 9.891, 0.313, 1.313, 0.703, 2.094, 3.453
+      ]
+    }
+  ]
+}
