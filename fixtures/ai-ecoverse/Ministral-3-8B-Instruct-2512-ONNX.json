@@ -1,0 +1,57 @@
+{
+  "model": "ai-ecoverse/Ministral-3-8B-Instruct-2512-ONNX",
+  "variant": "q4f16",
+  "revision": "c37fc273106c925c0861baf1a829bb7318d42d27",
+  "executionProviders": ["cpu"],
+  "generator": "scripts/fixtures.mjs",
+  "fixtures": [
+    {
+      "name": "capital",
+      "messages": [
+        { "role": "user", "content": "What is the capital of France? Answer in one sentence." }
+      ],
+      "text": "The capital of France is **Paris**.",
+      "tokens": [1784, 8961, 1307, 5498, 1395, 1603, 42572, 12617],
+      "logprobs": [-0.0007, 0, 0, -0.002, 0, -0.011, -0.0003, -0.0006],
+      "margins": [7.453, 11.008, 12.133, 6.578, 11.305, 4.516, 8.688, 8.469]
+    },
+    {
+      "name": "haiku",
+      "messages": [
+        { "role": "system", "content": "You are a helpful assistant." },
+        { "role": "user", "content": "Write a haiku about autumn leaves." }
+      ],
+      "text": "Golden whispers fall,\nrustling tales the wind does tell—\nearth dons crimson veil.",
+      "tokens": [
+        74059, 110027, 6962, 1520, 40455, 4604, 36005, 1278, 12330, 3120, 5584, 1674, 1010, 92515,
+        1266, 2232, 2989, 76808, 113504, 1046
+      ],
+      "logprobs": [
+        -0.9181, -0.6873, -0.3471, -0.4987, -1.8201, -0.0743, -1.5036, -1.0513, -0.371, -1.8689,
+        -0.2346, -0.0292, -0.0001, -1.1226, -1.7473, -0.0185, -1.0457, -0.0025, -1.5911, -0.0015
+      ],
+      "margins": [
+        1.164, 1.984, 1.672, 0.469, 0.016, 3.344, 0.227, 0.063, 2.094, 0.484, 3.039, 4.266, 11.836,
+        0.977, 0.156, 5.148, 1.25, 6.188, 0.367, 6.852
+      ]
+    },
+    {
+      "name": "math",
+      "messages": [{ "role": "user", "content": "What is 17 times 23? Show the steps briefly." }],
+      "text": "Here’s the calculation for \\( 17 \\times 23 \\):\n\n1. Break it down using the distribut",
+      "tokens": [
+        11745, 2190, 1278, 22028, 1394, 2007, 1032, 1049, 1055, 1617, 8379, 1032, 1050, 1051, 1617,
+        12291, 1049, 1046, 44477, 1494, 3151, 2505, 1278, 21475
+      ],
+      "logprobs": [
+        -0.4417, -0.465, -0.7231, -0.7362, -0.6996, -0.8526, -0.4742, -0.0001, -0.0001, -0.0003,
+        -0.0001, 0, -0.0001, -0.0001, -0.0009, -0.4548, -0.3752, -0.0086, -0.2124, -0.7667, -0.1185,
+        -0.104, -0.0209, -0.0846
+      ],
+      "margins": [
+        1.438, 1.188, 0.234, 0.531, 0.531, 0.234, 0.5, 10.203, 11.391, 8.109, 11.461, 13.297,
+        10.578, 10.32, 7.094, 0.844, 1.578, 5.484, 1.734, 0.547, 2.125, 2.969, 4.109, 2.469
+      ]
+    }
+  ]
+}
