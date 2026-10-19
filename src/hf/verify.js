@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { externalFiles } from '../engines/external.js';
 import { HttpError } from '../http/errors.js';
 
 const CHUNK = 16 * 1024 * 1024;
@@ -44,11 +45,21 @@ function corrupt(resolved, rel, { algorithm, digest }, etag) {
   );
 }
 
+async function verifiable(files, patterns) {
+  const out = await files.matches(patterns);
+  for (const rel of [...out]) {
+    if (!rel.endsWith('.onnx')) continue;
+    for (const name of await externalFiles(files, rel))
+      if (!out.includes(name) && (await files.exists(name))) out.push(name);
+  }
+  return out;
+}
+
 export async function verifyModel(resolved, { read = 'stream', memo = verified } = {}) {
   const { files, engine, info, variant } = resolved;
   if (!files?.blob || !engine.include) return 0;
   let checked = 0;
-  for (const rel of await files.matches(engine.include(info, variant))) {
+  for (const rel of await verifiable(files, engine.include(info, variant))) {
     const blob = await files.blob(rel);
     const stamp = blob && `${blob.size}:${blob.mtimeMs}`;
     if (!blob || memo.get(blob.path) === stamp) continue;

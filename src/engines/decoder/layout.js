@@ -281,5 +281,6 @@ export function includePatterns(info, variant) {
           ...(info.visionExtra ?? []),
         ]
       : []),
+    ...(info.vision && info.vision !== vision ? [`${info.vision.model}*`] : []),
   ];
 }
