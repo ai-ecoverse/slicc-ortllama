@@ -1,3 +1,4 @@
+import { verifyModel } from './hf/verify.js';
 import { providerAttempts, providerOrder } from './ort/providers.js';
 
 export const PRIORITY = { expire: -1, realtime: 0, speech: 1, decisions: 2, chat: 3, admin: 4 };
@@ -170,6 +171,7 @@ export class Runtime {
     await this.evict(this.maxLoaded - 1 - fixed);
     const backend = await this.backend();
     const started = this.now();
+    await verifyModel(resolved, { read: backend.track === 'node' ? 'stream' : 'whole' });
     const { order, source } = providerOrder(backend, resolved);
     const { attempts, skipped } = providerAttempts(order, backend);
     for (const ep of skipped)
