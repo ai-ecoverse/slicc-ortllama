@@ -243,6 +243,10 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
       info,
       files,
       download,
+      redownload: repo
+        ? (rel) =>
+            `${downloadHint(repo, { revision: requestedRevision, include: prefixed(subfolder, [rel]) })} --force-download`
+        : null,
       providers,
       key: `${id}:${chosen}@${revision ?? 'local'}${key ? `+${key}` : ''}${providers ? `+ep=${providers.join(',')}` : ''}`,
     };

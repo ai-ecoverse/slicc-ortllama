@@ -1,7 +1,9 @@
 import { readFileSync, realpathSync } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
-import { join, normalize, posix, sep } from 'node:path';
+import { basename, dirname, join, normalize, posix, sep } from 'node:path';
 import { isDir, listDir } from './cache.js';
+
+const ETAG = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 function within(root, path) {
   return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
@@ -91,9 +93,8 @@ export function modelFiles(root, { allow = [root] } = {}) {
     async list(rel) {
       return listDir(await real(rel).catch(() => ''));
     },
-    async bytes(patterns) {
+    async matches(patterns) {
       const seen = new Set();
-      let total = 0;
       for (const pattern of patterns) {
         const dir = posix.dirname(pattern);
         const name = posix.basename(pattern);
@@ -102,12 +103,24 @@ export function modelFiles(root, { allow = [root] } = {}) {
           : [name];
         for (const n of names) {
           const rel = dir === '.' ? n : `${dir}/${n}`;
-          if (seen.has(rel) || !(await files.exists(rel))) continue;
-          seen.add(rel);
-          total += await files.size(rel);
+          if (!seen.has(rel) && (await files.exists(rel))) seen.add(rel);
         }
       }
+      return [...seen];
+    },
+    async bytes(patterns) {
+      let total = 0;
+      for (const rel of await files.matches(patterns)) total += await files.size(rel);
       return total;
+    },
+    async blob(rel) {
+      const path = await real(rel);
+      const dir = dirname(path);
+      const name = basename(path);
+      if (!ETAG.test(name) || !(await roots).some((d) => d === dir && basename(d) === 'blobs'))
+        return null;
+      const { size, mtimeMs } = await stat(path);
+      return { path, etag: name, size, mtimeMs };
     },
     sub: (rel) => modelFiles(inside(root, rel), { allow }),
   };
