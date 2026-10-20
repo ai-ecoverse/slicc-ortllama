@@ -4,6 +4,7 @@ import { splitLong, splitSentences } from './kokoro/text.js';
 import { PRIORITY } from './runtime.js';
 
 const MAX_INPUT = 4096;
+const FLUSH_MS = 250;
 
 function optionalString(body, key) {
   if (body[key] !== undefined && typeof body[key] !== 'string')
@@ -41,21 +42,53 @@ function ignored(promise) {
   return promise;
 }
 
-function schedule({ resolved, runtime, request, signal }) {
+function flushGate(ms) {
+  let passed = 0;
+  let wake = null;
+  return {
+    pass(n = passed + 1) {
+      passed = n;
+      wake?.();
+    },
+    async wait(k) {
+      if (passed < k) {
+        let timer;
+        await new Promise((resolve) => {
+          wake = resolve;
+          timer = setTimeout(resolve, ms);
+        });
+        wake = null;
+        clearTimeout(timer);
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+    },
+  };
+}
+
+function schedule({ resolved, runtime, request, signal, gate }) {
   const job = (fn) => ignored(runtime.use(resolved, PRIORITY.speech, fn, signal));
   const { voice, speed } = request;
   const sentences = splitSentences(request.input).flatMap((s) => splitLong(s));
+  let count = 0;
+  const synthesis = (ids) => {
+    const k = count++;
+    return job(async (model) => {
+      await gate.wait(k);
+      return model.synthesize(ids, { voice, speed });
+    });
+  };
   const plan = (i) =>
     job(async (tts) => {
       const chunks = await tts.tokens(sentences[i], { voice });
-      const audio = chunks.map((ids) => job((model) => model.synthesize(ids, { voice, speed })));
+      const audio = chunks.map(synthesis);
       return { rate: tts.sampleRate, audio, next: i + 1 < sentences.length ? plan(i + 1) : null };
     });
   return plan(0);
 }
 
 async function* synthesize(context) {
-  let planned = schedule(context);
+  const gate = flushGate(FLUSH_MS);
+  let planned = schedule({ ...context, gate });
   let encoder = null;
   try {
     while (planned) {
@@ -64,12 +97,14 @@ async function* synthesize(context) {
       for (const pending of sentence.audio) {
         const bytes = encoder.push(await pending);
         if (bytes.length) yield bytes;
+        gate.pass();
       }
       planned = sentence.next;
     }
     const tail = encoder.end();
     if (tail.length) yield tail;
   } finally {
+    gate.pass(Number.POSITIVE_INFINITY);
     encoder?.close?.();
   }
 }
