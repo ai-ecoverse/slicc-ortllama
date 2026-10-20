@@ -56,10 +56,14 @@ export class Runtime {
     return this.backendPromise;
   }
 
-  run(priority, task, signal, key = null) {
+  run(priority, task, signal, key = null, ready = null) {
     if (signal?.aborted) return Promise.reject(abortError(signal));
     return new Promise((resolve, reject) => {
-      const job = { priority, seq: this.seq++, task, resolve, reject, signal, key };
+      const job = { priority, seq: this.seq++, task, resolve, reject, signal, key, ready };
+      ready?.catch(noop).then(() => {
+        job.ready = null;
+        this.pump();
+      });
       job.onAbort = () => {
         this.queue.splice(this.queue.indexOf(job), 1);
         reject(abortError(signal));
@@ -79,7 +83,9 @@ export class Runtime {
   pump() {
     if (this.running) return;
     this.queue.sort((a, b) => a.priority - b.priority || a.seq - b.seq);
-    const at = this.queue.findIndex((j) => this.fits(j));
+    const waiting = this.queue.findIndex((j) => j.ready);
+    const ahead = waiting < 0 ? this.queue : this.queue.slice(0, waiting);
+    const at = ahead.findIndex((j) => this.fits(j));
     if (at < 0) return;
     const [job] = this.queue.splice(at, 1);
     job.signal?.removeEventListener('abort', job.onAbort);
@@ -120,7 +126,7 @@ export class Runtime {
     return turn;
   }
 
-  use(resolved, priority, fn, signal) {
+  use(resolved, priority, fn, signal, ready = null) {
     return this.run(
       priority,
       async (_signal, turn) => {
@@ -135,7 +141,8 @@ export class Runtime {
         }
       },
       signal,
-      resolved.key
+      resolved.key,
+      ready
     );
   }
 

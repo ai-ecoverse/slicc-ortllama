@@ -1,4 +1,3 @@
-import { once } from 'node:events';
 import { createServer as createHttpServer } from 'node:http';
 import { errorBody, HttpError } from './errors.js';
 
@@ -106,7 +105,8 @@ async function pipe(res, result, cors, signal) {
   res.writeHead(result.status ?? 200, { ...cors, ...result.headers });
   try {
     while (!step.done) {
-      if (!res.write(step.value)) await Promise.race([once(res, 'drain'), aborted]);
+      const written = new Promise((resolve) => res.write(step.value, resolve));
+      await Promise.race([written, aborted]);
       step = await next();
     }
     res.end();
