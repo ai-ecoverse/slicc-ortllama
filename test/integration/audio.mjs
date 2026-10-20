@@ -7,8 +7,8 @@ export async function foxWav() {
   return fixture('wav');
 }
 
-export async function fixture(ext) {
-  return new Uint8Array(await readFile(new URL(`fixtures/fox.${ext}`, import.meta.url)));
+export async function fixture(ext, name = 'fox') {
+  return new Uint8Array(await readFile(new URL(`fixtures/${name}.${ext}`, import.meta.url)));
 }
 
 export function pcm24(wav, { before = 0, after = 0, endOnSpeech = false } = {}) {
