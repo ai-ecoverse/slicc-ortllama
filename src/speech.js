@@ -42,40 +42,45 @@ function ignored(promise) {
   return promise;
 }
 
-function flushGate(ms) {
+function flushGate() {
+  const opens = [];
+  const waits = [];
   let passed = 0;
-  let wake = null;
   return {
+    passed(k) {
+      if (passed >= k) return null;
+      waits[k] ??= new Promise((resolve) => {
+        opens[k] = resolve;
+      });
+      return waits[k];
+    },
     pass(n = passed + 1) {
       passed = n;
-      wake?.();
-    },
-    async wait(k) {
-      if (passed < k) {
-        let timer;
-        await new Promise((resolve) => {
-          wake = resolve;
-          timer = setTimeout(resolve, ms);
-        });
-        wake = null;
-        clearTimeout(timer);
-      }
-      await new Promise((resolve) => setImmediate(resolve));
+      for (const [k, open] of opens.entries()) if (open && k <= n) open();
     },
   };
 }
 
+async function within(promise, ms) {
+  let timer;
+  await Promise.race([promise, new Promise((resolve) => (timer = setTimeout(resolve, ms)))]);
+  clearTimeout(timer);
+}
+
+const immediate = () => new Promise((resolve) => setImmediate(resolve));
+
 function schedule({ resolved, runtime, request, signal, gate }) {
-  const job = (fn) => ignored(runtime.use(resolved, PRIORITY.speech, fn, signal));
+  const job = (fn, ready) => ignored(runtime.use(resolved, PRIORITY.speech, fn, signal, ready));
   const { voice, speed } = request;
   const sentences = splitSentences(request.input).flatMap((s) => splitLong(s));
   let count = 0;
+  let previous = Promise.resolve();
   const synthesis = (ids) => {
     const k = count++;
-    return job(async (model) => {
-      await gate.wait(k);
-      return model.synthesize(ids, { voice, speed });
-    });
+    const ready = previous.then(() => within(gate.passed(k), FLUSH_MS)).then(immediate);
+    const audio = job((model) => model.synthesize(ids, { voice, speed }), ready);
+    previous = audio.catch(() => {});
+    return audio;
   };
   const plan = (i) =>
     job(async (tts) => {
@@ -87,7 +92,7 @@ function schedule({ resolved, runtime, request, signal, gate }) {
 }
 
 async function* synthesize(context) {
-  const gate = flushGate(FLUSH_MS);
+  const gate = flushGate();
   let planned = schedule({ ...context, gate });
   let encoder = null;
   try {
