@@ -5,6 +5,9 @@ const SIZES = [0, 8, 12, 0, 16, 20, 24, 32];
 const FIXED = [[], [1], [2, -1], [3, -3, 1], [4, -6, 4, -1]];
 const BLOCK = 4096;
 const MAX_RATE = 192000;
+const MAX_ORDER = 12;
+const PRECISION = 12;
+const PRECISIONS = [10, 11, 13, 14, 15];
 
 const crcTable = (poly, bits) =>
   new Uint16Array(256).map((_, i) => {
@@ -286,15 +289,65 @@ function utf8(value) {
   return out;
 }
 
-function fixedResidual(x, order) {
-  const coefs = FIXED[order];
+function remainder(x, coefs, shift = 0) {
+  const order = coefs.length;
+  const scale = 2 ** shift;
   const out = new Int32Array(x.length - order);
   for (let i = order; i < x.length; i++) {
     let p = 0;
     for (let j = 0; j < order; j++) p += coefs[j] * x[i - 1 - j];
-    out[i - order] = x[i] - p;
+    out[i - order] = x[i] - Math.floor(p / scale);
   }
   return out;
+}
+
+const windows = new Map();
+
+function tukey(n) {
+  if (!windows.has(n)) {
+    const edge = Math.floor(n / 4);
+    const w = new Float64Array(n).fill(1);
+    for (let i = 0; i < edge; i++) w[i] = w[n - 1 - i] = 0.5 - 0.5 * Math.cos((Math.PI * i) / edge);
+    windows.set(n, w);
+  }
+  return windows.get(n);
+}
+
+function levinson(x, max) {
+  const w = tukey(x.length);
+  const y = Float64Array.from(x, (v, i) => v * w[i]);
+  const r = Array.from({ length: max + 1 }, (_, lag) => {
+    let sum = 0;
+    for (let i = lag; i < y.length; i++) sum += y[i] * y[i - lag];
+    return sum;
+  });
+  const out = [];
+  let a = [];
+  let error = r[0];
+  for (let m = 1; m <= max; m++) {
+    let k = r[m];
+    for (let j = 1; j < m; j++) k -= a[j - 1] * r[m - j];
+    k /= error;
+    error *= 1 - k * k;
+    if (!(error > 0)) break;
+    a = [...a.map((v, j) => v - k * a[m - 2 - j]), k];
+    out.push(a);
+  }
+  return out;
+}
+
+function quantize(lpc, precision) {
+  const top = Math.max(...lpc.map(Math.abs));
+  const shift = Math.max(0, Math.min(15, precision - 2 - Math.floor(Math.log2(top))));
+  const limit = 2 ** (precision - 1);
+  let error = 0;
+  const coefs = lpc.map((c) => {
+    error += c * 2 ** shift;
+    const q = Math.max(-limit, Math.min(limit - 1, Math.round(error)));
+    error -= q;
+    return q;
+  });
+  return { coefs, shift };
 }
 
 function riceCost(u, from, to) {
@@ -327,6 +380,38 @@ function partitionPlan(u, n, order) {
   return best;
 }
 
+function coded(x, coefs, shift, precision) {
+  const order = coefs.length;
+  const u = remainder(x, coefs, shift).map((v) => (v < 0 ? -2 * v - 1 : 2 * v));
+  const plan = partitionPlan(u, x.length, order);
+  const head = precision ? 9 + order * precision : 0;
+  return { coefs, shift, precision, u, plan, bits: 14 + order * 16 + head + plan.bits };
+}
+
+function fixedChoice(x) {
+  let best = null;
+  let least = Infinity;
+  for (let o = 0; o <= Math.min(4, x.length - 1); o++) {
+    let sum = 0;
+    for (const v of remainder(x, FIXED[o])) sum += Math.abs(v);
+    if (sum < least) [least, best] = [sum, FIXED[o]];
+  }
+  return coded(x, best, 0, 0);
+}
+
+function lpcChoice(x) {
+  const smaller = (a, b) => (b.bits < a.bits ? b : a);
+  const filters = levinson(x, Math.min(MAX_ORDER, x.length - 1));
+  const tries = (lpc, precisions) =>
+    precisions.map((p) => {
+      const { coefs, shift } = quantize(lpc, p);
+      return coded(x, coefs, shift, p);
+    });
+  const best = filters.flatMap((lpc) => tries(lpc, [PRECISION])).reduce(smaller, fixedChoice(x));
+  if (!best.precision) return best;
+  return tries(filters[best.coefs.length - 1], PRECISIONS).reduce(smaller, best);
+}
+
 function writeSubframe(w, x) {
   const n = x.length;
   if (x.every((v) => v === x[0])) {
@@ -334,24 +419,21 @@ function writeSubframe(w, x) {
     w.write(x[0], 16);
     return;
   }
-  let order = 0;
-  let res = null;
-  let least = Infinity;
-  for (let o = 0; o <= Math.min(4, n - 1); o++) {
-    const r = fixedResidual(x, o);
-    let sum = 0;
-    for (const v of r) sum += Math.abs(v);
-    if (sum < least) [least, order, res] = [sum, o, r];
-  }
-  const u = res.map((v) => (v < 0 ? -2 * v - 1 : 2 * v));
-  const plan = partitionPlan(u, n, order);
-  if (plan.bits + order * 16 >= n * 16) {
+  const best = lpcChoice(x);
+  if (best.bits >= 8 + n * 16) {
     w.write(2, 8);
     for (const v of x) w.write(v, 16);
     return;
   }
-  w.write(16 + order * 2, 8);
+  const { coefs, shift, precision, u, plan } = best;
+  const order = coefs.length;
+  w.write(precision ? 62 + order * 2 : 16 + order * 2, 8);
   for (let i = 0; i < order; i++) w.write(x[i], 16);
+  if (precision) {
+    w.write(precision - 1, 4);
+    w.write(shift, 5);
+    for (const c of coefs) w.write(c, precision);
+  }
   w.write(0, 2);
   w.write(plan.p, 4);
   const per = n / 2 ** plan.p;
