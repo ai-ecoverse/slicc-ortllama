@@ -48,7 +48,7 @@
     "@breezystack/lamejs": "1.2.7",
     "@earendil-works/pi-ai": "1.3.0",
     "espeak-ng": "1.0.2",
-    "lefthook": "2.2.1",
+    "lefthook": "2.2.2",
     "onnxruntime-node": "1.30.0",
     "phonemize": "2.0.1",
     "phonemizer": "1.2.1",
