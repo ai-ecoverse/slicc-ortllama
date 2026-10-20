@@ -6,6 +6,7 @@ const STEP_SECONDS = 60;
 const BITRATE = 64;
 const DECODER_DELAY = 529;
 const LAME = new Set(['LAME', 'Lavf', 'Lavc']);
+const TAGS = new Set(['Xing', 'Info']);
 const KBPS = [
   [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
   [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
@@ -45,9 +46,9 @@ export function gapless(bytes) {
   const spf = mpeg1 ? 1152 : 576;
   const rate = RATES[rateIndex] / (mpeg1 ? 1 : 4 - version);
   const end = at + Math.floor((spf * KBPS[mpeg1 ? 0 : 1][index] * 125) / rate) + ((b2 >> 1) & 1);
-  const tag = at + 4 + SIDE[mpeg1 ? 0 : 1][b3 >> 6 === 3 ? 0 : 1];
-  if (end > bytes.length || tag + 8 > end || !['Xing', 'Info'].includes(text(bytes, tag)))
-    return plain;
+  const side = at + 4 + SIDE[mpeg1 ? 0 : 1][b3 >> 6 === 3 ? 0 : 1];
+  const tag = b1 & 1 || TAGS.has(text(bytes, side)) ? side : side + 2;
+  if (end > bytes.length || tag + 8 > end || !TAGS.has(text(bytes, tag))) return plain;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const flags = view.getUint32(tag + 4);
   const frames = flags & 1 && tag + 12 <= end ? view.getUint32(tag + 8) : 0;
