@@ -140,7 +140,7 @@ Audio is `audio/pcm` at 8–48 kHz (24 kHz by default). Turns are detected by `s
 
 - `model` defaults to the `speech` role, `voice` to `af_heart`, and `instructions` is accepted and ignored.
 - `response_format` is `wav` (the default), `pcm` (24 kHz mono 16-bit little-endian), `mp3` (`audio/mpeg`, 64 kbit/s), `opus` (Ogg Opus, `audio/opus`, 32 kbit/s) or `flac` (`audio/flac`); `aac` answers `400`. mp3 is encoded by `@breezystack/lamejs` (LGPL-3.0), which ortllama does not ship and finds like a phonemizer (`npm install @breezystack/lamejs`); without it, `mp3` answers `501`.
-- `input` takes up to 4096 characters. It is split into sentences, long ones at clause marks or spaces, and each piece's audio is sent as soon as it is ready.
+- `input` takes up to 4096 characters. It is split into sentences, long ones at clause marks or spaces, and each piece's audio is sent as soon as it is ready. A piece is synthesized only once the one before it has been written to the socket, or after 250 ms if the client is not reading, so on single-threaded WASM, where a synthesis blocks the program, the first sentence still arrives while the rest is synthesized.
 
 ```sh
 hf download onnx-community/Kokoro-82M-v1.0-ONNX --include config.json tokenizer.json onnx/model.onnx 'voices/*'
