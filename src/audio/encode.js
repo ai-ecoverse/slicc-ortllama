@@ -1,3 +1,4 @@
+import { createAacEncoder } from './aac-encoder.js';
 import { createFlacEncoder } from './flac.js';
 import { createMp3Encoder } from './mp3-encoder.js';
 import { opusEncoder } from './opus.js';
@@ -26,4 +27,5 @@ export const ENCODERS = {
   mp3: { type: 'audio/mpeg', open: async () => createMp3Encoder },
   opus: { type: 'audio/opus', open: () => opusEncoder() },
   flac: { type: 'audio/flac', open: async () => createFlacEncoder },
+  aac: { type: 'audio/aac', open: async () => createAacEncoder },
 };

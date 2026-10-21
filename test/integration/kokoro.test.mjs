@@ -13,9 +13,11 @@ const KOKORO = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 const TEXT =
   'The quick brown fox jumps over the lazy dog. Then it runs into the forest, where nobody can find it.';
 
-async function cached() {
+const WHISPER = process.env.ORTLLAMA_TEST_WHISPER ?? 'onnx-community/whisper-tiny';
+
+async function cached(model = KOKORO) {
   try {
-    await (await openCatalog({ env: { ...process.env, ORTLLAMA_MODEL_PATH: '' } })).resolve(KOKORO);
+    await (await openCatalog({ env: { ...process.env, ORTLLAMA_MODEL_PATH: '' } })).resolve(model);
     return true;
   } catch {
     return false;
@@ -23,6 +25,7 @@ async function cached() {
 }
 
 const have = await cached();
+const hearing = (await cached(WHISPER)) ? false : `${WHISPER} is not in the Hugging Face cache`;
 const skip =
   !have && !process.env.ORTLLAMA_REQUIRE_MODEL && `${KOKORO} is not in the Hugging Face cache`;
 
@@ -123,13 +126,19 @@ describe('Kokoro speech through pi-audio', { skip }, () => {
     plausible(bytes / 48000, TEXT);
   });
 
-  test('streams mp3, Ogg Opus and FLAC that decode back to speech', async () => {
+  test('streams mp3, Ogg Opus, FLAC and AAC that decode back to speech', async () => {
     const input = `${TEXT} It was never seen again. The dog slept on.`;
-    const magic = { mp3: [0x49, 0x44, 0x33], opus: [0x4f, 0x67, 0x67, 0x53], flac: [0x66, 0x4c] };
+    const magic = {
+      mp3: [0x49, 0x44, 0x33],
+      opus: [0x4f, 0x67, 0x67, 0x53],
+      flac: [0x66, 0x4c],
+      aac: [0xff, 0xf1],
+    };
     for (const [format, type] of [
       ['mp3', 'audio/mpeg'],
       ['opus', 'audio/opus'],
       ['flac', 'audio/flac'],
+      ['aac', 'audio/aac'],
     ]) {
       const started = performance.now();
       const response = await fetch(`${server.url}/v1/audio/speech`, {
@@ -158,6 +167,28 @@ describe('Kokoro speech through pi-audio', { skip }, () => {
       plausible(samples.length / 24000, input);
       assert.ok(rms > 0.02, `${format}: rms ${rms}`);
     }
+  });
+
+  test('speaks AAC that Whisper hears as it hears the WAV', { skip: hearing }, async () => {
+    const heard = async (format) => {
+      const speech = await fetch(`${server.url}/v1/audio/speech`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ input: TEXT, voice: 'af_heart', response_format: format }),
+      });
+      const form = new FormData();
+      form.set('file', new Blob([await speech.arrayBuffer()]), `speech.${format}`);
+      form.set('model', WHISPER);
+      form.set('language', 'en');
+      const response = await fetch(`${server.url}/v1/audio/transcriptions`, {
+        method: 'POST',
+        body: form,
+      });
+      return (await response.json()).text;
+    };
+    const wav = await heard('wav');
+    assert.match(wav.toLowerCase(), /quick brown fox/);
+    assert.equal(await heard('aac'), wav);
   });
 
   const post = (body, signal) =>
@@ -194,9 +225,9 @@ describe('Kokoro speech through pi-audio', { skip }, () => {
   });
 
   test('names the supported formats and voices', async () => {
-    const aac = await post({ response_format: 'aac' });
-    assert.equal(aac.status, 400);
-    assert.match((await aac.json()).error.message, /use one of wav, pcm, mp3, opus, flac/);
+    const amr = await post({ response_format: 'amr' });
+    assert.equal(amr.status, 400);
+    assert.match((await amr.json()).error.message, /use one of wav, pcm, mp3, opus, flac, aac$/);
     const voice = await post({ voice: '../../etc/passwd' });
     assert.equal(voice.status, 400);
     assert.equal((await voice.json()).error.param, 'voice');

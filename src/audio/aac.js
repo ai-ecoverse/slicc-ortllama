@@ -98,11 +98,11 @@ function kbd(n, alpha) {
 const sine = (n) =>
   Float64Array.from({ length: n / 2 }, (_, i) => Math.sin((Math.PI / n) * (i + 0.5)));
 const RISE_LONG = [sine(2048), kbd(2048, 4)];
-const RISE_SHORT = [sine(256), kbd(256, 6)];
+export const RISE_SHORT = [sine(256), kbd(256, 6)];
 const POW43 = Float64Array.from({ length: 8192 }, (_, i) => i ** (4 / 3));
 const windows = new Map();
 
-function longWindow(sequence, prev, shape) {
+export function longWindow(sequence, prev, shape) {
   const key = sequence * 4 + prev * 2 + shape;
   if (windows.has(key)) return windows.get(key);
   const w = new Float64Array(2048);

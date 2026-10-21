@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
+import { decodeFile } from '../../src/audio/decode.js';
 import { createRuntime, startServer } from '../../src/index.js';
 
 const SENTENCES = ['One fish swims.', 'Two fish dive.', 'Red fish rest.', 'Blue fish sleep.'];
@@ -47,7 +48,7 @@ describe('speech streams sentence by sentence from a synchronous engine', () => 
   });
   after(() => server?.close());
 
-  for (const format of ['wav', 'pcm']) {
+  for (const format of ['wav', 'pcm', 'aac']) {
     test(`${format}: the first sentence arrives before the last one is synthesized`, async () => {
       timeline.length = 0;
       const response = await fetch(`${server.url}/v1/audio/speech`, {
@@ -57,18 +58,24 @@ describe('speech streams sentence by sentence from a synchronous engine', () => 
       });
       assert.equal(response.status, 200);
       const arrivals = [];
-      let bytes = 0;
+      const chunks = [];
       for await (const chunk of response.body) {
         arrivals.push(performance.now());
-        bytes += chunk.length;
+        chunks.push(chunk);
       }
+      const bytes = new Uint8Array(Buffer.concat(chunks));
       const starts = timeline.filter((e) => e.what === 'start').map((e) => e.at);
       const ends = timeline.filter((e) => e.what === 'end').map((e) => e.at);
       assert.equal(starts.length, SENTENCES.length);
-      assert.equal(bytes, SENTENCES.length * 4800 + (format === 'wav' ? 44 : 0));
+      if (format === 'aac') {
+        assert.equal(response.headers.get('content-type'), 'audio/aac');
+        const decoded = await decodeFile(bytes, { rate: 24000 });
+        assert.equal(decoded.length, (Math.ceil((SENTENCES.length * 2400) / 1024) + 1) * 1024);
+        assert.ok(Math.abs(decoded[1024 + 4800] - 0.1) < 0.01, `${decoded[1024 + 4800]}`);
+      } else assert.equal(bytes.length, SENTENCES.length * 4800 + (format === 'wav' ? 44 : 0));
       const report = `first chunk ${Math.round(arrivals[0] - starts[0])} ms after the first synthesis started; last synthesis started at ${Math.round(starts.at(-1) - starts[0])} ms and ended at ${Math.round(ends.at(-1) - starts[0])} ms`;
       assert.ok(arrivals[0] < starts.at(-1), report);
-      assert.ok(arrivals[0] < starts[1], report);
+      if (format !== 'aac') assert.ok(arrivals[0] < starts[1], report);
     });
   }
 });

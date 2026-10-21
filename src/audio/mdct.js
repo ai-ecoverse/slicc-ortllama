@@ -33,6 +33,7 @@ function plan(n) {
     re: new Float64Array(half),
     im: new Float64Array(half),
     u: new Float64Array(m),
+    folded: new Float64Array(m),
   };
 }
 
@@ -88,24 +89,16 @@ function slow(input, output, n) {
   return output;
 }
 
-export function mdct(input, output, n) {
-  const m = n >> 1;
-  const rows = matrix(n);
-  for (let k = 0; k < m; k++) {
-    let sum = 0;
-    for (let i = 0; i < n; i++) sum += input[i] * rows[i * m + k];
-    output[k] = sum;
-  }
-  return output;
-}
-
-export function imdct(input, output, n) {
-  if (!Number.isInteger(Math.log2(n))) return slow(input, output, n);
+function planOf(n) {
   let p = plans.get(n);
   if (!p) {
     p = plan(n);
     plans.set(n, p);
   }
+  return p;
+}
+
+function dct4(p, input) {
   const { m, half, reverse, twistCos, twistSin, re, im, u } = p;
   for (let k = 0; k < half; k++) {
     const a = input[2 * k];
@@ -121,6 +114,34 @@ export function imdct(input, output, n) {
     u[2 * k] = r;
     u[m - 1 - 2 * k] = -i;
   }
+  return u;
+}
+
+export function mdct(input, output, n) {
+  const m = n >> 1;
+  if (!Number.isInteger(Math.log2(n))) {
+    const rows = matrix(n);
+    for (let k = 0; k < m; k++) {
+      let sum = 0;
+      for (let i = 0; i < n; i++) sum += input[i] * rows[i * m + k];
+      output[k] = sum;
+    }
+    return output;
+  }
+  const p = planOf(n);
+  const q = m >> 1;
+  const folded = p.folded;
+  for (let i = 0; i < q; i++) folded[i] = -input[3 * q - 1 - i] - input[3 * q + i];
+  for (let i = q; i < m; i++) folded[i] = input[i - q] - input[3 * q - 1 - i];
+  output.set(dct4(p, folded).subarray(0, m));
+  return output;
+}
+
+export function imdct(input, output, n) {
+  if (!Number.isInteger(Math.log2(n))) return slow(input, output, n);
+  const p = planOf(n);
+  const { m } = p;
+  const u = dct4(p, input);
   const q = m >> 1;
   for (let i = 0; i < q; i++) output[i] = u[i + q];
   for (let i = q; i < 3 * q; i++) output[i] = -u[3 * q - 1 - i];
