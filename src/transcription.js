@@ -53,7 +53,7 @@ export function formatTranscript(result, format) {
   };
 }
 
-export function transcriptionRoutes({ catalog, runtime, decode = decodeFile }) {
+export function transcriptionRoutes({ catalog, runtime, aac, decode = decodeFile }) {
   return {
     'POST /v1/audio/transcriptions': {
       raw: true,
@@ -69,7 +69,7 @@ export function transcriptionRoutes({ catalog, runtime, decode = decodeFile }) {
           throw badRequest(`model ${resolved.id} does not transcribe audio`, 'model');
         let audio;
         try {
-          audio = await decode(file.data, { type: file.type, name: file.filename });
+          audio = await decode(file.data, { type: file.type, name: file.filename, aac });
         } catch (error) {
           if (!(error instanceof AudioFormatError)) throw error;
           throw badRequest(error.message, 'file');

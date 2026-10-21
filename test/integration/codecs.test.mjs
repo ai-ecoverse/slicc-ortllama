@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
-import { audioSpecificConfig } from '../../src/audio/aac.js';
+import { audioSpecificConfig } from '../../src/audio/adts.js';
 import { decodeFile } from '../../src/audio/decode.js';
 import { createFlacEncoder, decodeFlac } from '../../src/audio/flac.js';
 import { concat, decodeWav, encodePcm16 } from '../../src/audio/pcm.js';

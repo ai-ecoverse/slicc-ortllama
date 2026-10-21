@@ -62,6 +62,7 @@ export async function startServer({
   apiKey,
   catalog,
   runtime,
+  aac,
   ...rest
 } = {}) {
   const cat = catalog ?? (await openCatalog({ env, ...rest }));
@@ -71,6 +72,7 @@ export async function startServer({
     runtime: rt,
     version: VERSION,
     maxTokens: positive(env.ORTLLAMA_MAX_TOKENS, DEFAULT_MAX_TOKENS),
+    aac,
   });
   const origins = (env.ORTLLAMA_ORIGINS ?? '').split(',').filter(Boolean);
   const options = { apiKey: apiKey ?? env.ORTLLAMA_API_KEY, origins, hosts: hostsFor(host, env) };

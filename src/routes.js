@@ -24,7 +24,7 @@ function modelEntry(m, aliasOf = null) {
   };
 }
 
-export function createRoutes({ catalog, runtime, version, maxTokens }) {
+export function createRoutes({ catalog, runtime, version, maxTokens, aac }) {
   return {
     'GET /': { public: true, handle: () => ({ body: `ortllama ${version} is running` }) },
     'GET /v1/models': {
@@ -60,7 +60,7 @@ export function createRoutes({ catalog, runtime, version, maxTokens }) {
         return { ...result, model: model ?? 'decisions' };
       },
     },
-    ...transcriptionRoutes({ catalog, runtime }),
-    'POST /v1/audio/speech': speechRoute({ catalog, runtime }),
+    ...transcriptionRoutes({ catalog, runtime, aac }),
+    'POST /v1/audio/speech': speechRoute({ catalog, runtime, aac }),
   };
 }

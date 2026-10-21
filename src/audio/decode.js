@@ -1,4 +1,5 @@
-import { adtsFrames, audioSpecificConfig, createAacDecoder, isAdts } from './aac.js';
+import { aacCodec } from './aac-codec.js';
+import { adtsFrames, ascBytes, isAdts } from './adts.js';
 import { decodeFlac, isFlac } from './flac.js';
 import { decodeMp3, id3Size, isMp3 } from './mp3.js';
 import { isMp4, mp4Audio } from './mp4.js';
@@ -24,7 +25,7 @@ const BUDGET_RATE = 48000;
 const AAC_OBJECTS = new Set([0x40, 0x66, 0x67]);
 
 const SUPPORTED =
-  'send wav, mp3, flac, m4a, mp4 or aac (AAC-LC), ogg with opus or vorbis, webm with opus, or 16-bit PCM (audio/pcm;rate=N)';
+  'send wav, mp3, flac, m4a, mp4 or aac, ogg with opus or vorbis, webm with opus, or 16-bit PCM (audio/pcm;rate=N)';
 
 const TYPES = {
   mp3: ['audio/mpeg', 'audio/mp3', 'audio/mpga', 'audio/x-mp3', 'audio/x-mpeg'],
@@ -84,53 +85,78 @@ function opusStream(head, packets, granule, rate, container) {
   return decodeOpus({ head, packets, granule, rate: opusRate(rate) });
 }
 
-function* trimmed(frames, decode, rate, edit) {
-  let skip = edit ? Math.round(edit.skip * rate) : 0;
-  let keep = edit ? Math.round(edit.keep * rate) : Infinity;
-  for (const frame of frames) {
-    let samples = decode(frame);
-    const cut = Math.min(skip, samples.length);
+async function* trimmed(chunks, edit) {
+  let skip = null;
+  let keep = null;
+  for await (const chunk of chunks) {
+    skip ??= edit ? Math.round(edit.skip * chunk.rate) : 0;
+    keep ??= edit ? Math.round(edit.keep * chunk.rate) : Infinity;
+    const cut = Math.min(skip, chunk.samples.length);
     skip -= cut;
-    samples = samples.subarray(cut, cut + Math.min(keep, samples.length - cut));
+    const samples = chunk.samples.subarray(cut, cut + Math.min(keep, chunk.samples.length - cut));
     keep -= samples.length;
-    if (samples.length) yield { samples, rate };
+    if (samples.length) yield { samples, rate: chunk.rate };
     if (keep <= 0) return;
   }
 }
 
-function aacStream(config, frames, blocks = [], edit = null) {
-  const decoder = createAacDecoder(config);
-  const decode = (i) => decoder(frames[i], blocks[i]);
-  return trimmed(frames.keys(), decode, config.rate, edit);
+function mono(planes) {
+  if (planes.length === 1) return planes[0];
+  const out = new Float32Array(planes[0].length);
+  for (const plane of planes)
+    for (let i = 0; i < out.length; i++) out[i] += plane[i] / planes.length;
+  return out;
 }
 
-function mp4Stream(bytes) {
+async function* aacChunks(aac, asc, frames) {
+  let decoder = null;
+  try {
+    decoder = await aac.decoder({ asc });
+    for (const frame of frames) {
+      const planes = await decoder.decode(frame);
+      if (planes[0]?.length) yield { samples: mono(planes), rate: decoder.sampleRate };
+    }
+    const done = decoder;
+    decoder = null;
+    const tail = await done.flush();
+    if (tail[0]?.length) yield { samples: mono(tail), rate: done.sampleRate };
+  } catch (error) {
+    if (error instanceof AudioFormatError) throw error;
+    throw new AudioFormatError(`the AAC stream could not be decoded: ${error?.message ?? error}`);
+  } finally {
+    await decoder?.flush().catch(() => {});
+  }
+}
+
+function mp4Stream(bytes, aac) {
   const { codec, esds, frames, edit } = mp4Audio(bytes);
   if (codec !== 'mp4a' || !esds?.config || !AAC_OBJECTS.has(esds.object)) {
     const name = codec === 'mp4a' && esds ? `mp4a.${esds.object.toString(16)}` : codec;
     throw new AudioFormatError(`MP4 codec ${name} is not supported; ${SUPPORTED}`);
   }
-  return aacStream(audioSpecificConfig(esds.config), frames, [], edit);
+  return trimmed(aacChunks(aac, esds.config, frames), edit);
+}
+
+function* vorbisChunks(decode, packets, rate) {
+  for (const packet of packets) yield { samples: decode(packet), rate };
 }
 
 function vorbisStream(packets, granule) {
   const setup = vorbisHeaders(packets[0], packets[2]);
   const decode = createVorbisDecoder(setup);
   return trimmed(
-    packets.slice(3),
-    decode,
-    setup.rate,
+    vorbisChunks(decode, packets.slice(3), setup.rate),
     granule >= 0 && { skip: 0, keep: granule / setup.rate }
   );
 }
 
-function chunks(bytes, format, contentType, rate) {
+function chunks(bytes, format, contentType, rate, aac) {
   if (format === 'mp3') return decodeMp3(bytes);
   if (format === 'flac') return decodeFlac(bytes);
-  if (format === 'mp4') return mp4Stream(bytes);
+  if (format === 'mp4') return mp4Stream(bytes, aac);
   if (format === 'aac') {
-    const { config, frames, blocks } = adtsFrames(bytes);
-    return aacStream(config, frames, blocks);
+    const { config, frames } = adtsFrames(bytes);
+    return aacChunks(aac, ascBytes(config), frames);
   }
   if (format === 'ogg') {
     const { packets, granule } = oggPackets(bytes);
@@ -150,7 +176,7 @@ function chunks(bytes, format, contentType, rate) {
 
 export async function decodeFile(
   bytes,
-  { type = '', name = '', rate = 16000, maxSeconds = MAX_SECONDS } = {}
+  { type = '', name = '', rate = 16000, maxSeconds = MAX_SECONDS, aac = aacCodec() } = {}
 ) {
   const { format, body } = detect(bytes, type, name);
   const { type: mime } = audioParams(type);
@@ -161,7 +187,7 @@ export async function decodeFile(
   let source = 0;
   let from = 0;
   let resampler = null;
-  for await (const chunk of chunks(body, format, type, rate)) {
+  for await (const chunk of chunks(body, format, type, rate, aac)) {
     if (!resampler) {
       from = chunk.rate;
       resampler = createResampler(from, rate);

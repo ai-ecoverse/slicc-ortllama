@@ -123,13 +123,19 @@ describe('Kokoro speech through pi-audio', { skip }, () => {
     plausible(bytes / 48000, TEXT);
   });
 
-  test('streams mp3, Ogg Opus and FLAC that decode back to speech', async () => {
+  test('streams mp3, Ogg Opus, FLAC and ADTS AAC that decode back to speech', async () => {
     const input = `${TEXT} It was never seen again. The dog slept on.`;
-    const magic = { mp3: [0x49, 0x44, 0x33], opus: [0x4f, 0x67, 0x67, 0x53], flac: [0x66, 0x4c] };
+    const magic = {
+      mp3: [0x49, 0x44, 0x33],
+      opus: [0x4f, 0x67, 0x67, 0x53],
+      flac: [0x66, 0x4c],
+      aac: [0xff, 0xf1],
+    };
     for (const [format, type] of [
       ['mp3', 'audio/mpeg'],
       ['opus', 'audio/opus'],
       ['flac', 'audio/flac'],
+      ['aac', 'audio/aac'],
     ]) {
       const started = performance.now();
       const response = await fetch(`${server.url}/v1/audio/speech`, {
@@ -194,9 +200,9 @@ describe('Kokoro speech through pi-audio', { skip }, () => {
   });
 
   test('names the supported formats and voices', async () => {
-    const aac = await post({ response_format: 'aac' });
-    assert.equal(aac.status, 400);
-    assert.match((await aac.json()).error.message, /use one of wav, pcm, mp3, opus, flac/);
+    const amr = await post({ response_format: 'amr' });
+    assert.equal(amr.status, 400);
+    assert.match((await amr.json()).error.message, /use one of wav, pcm, mp3, opus, flac, aac/);
     const voice = await post({ voice: '../../etc/passwd' });
     assert.equal(voice.status, 400);
     assert.equal((await voice.json()).error.param, 'voice');
