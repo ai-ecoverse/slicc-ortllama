@@ -102,3 +102,95 @@ describe('mp3 decoding in JavaScript', () => {
     await assert.rejects(decodeFile(joined), /the audio changes its sample rate/);
   });
 });
+
+const unshipped = `
+import { registerHooks } from 'node:module';
+registerHooks({
+  resolve(specifier, context, next) {
+    if (specifier === '@breezystack/lamejs') throw Object.assign(new Error("Cannot find package '@breezystack/lamejs'"), { code: 'ERR_MODULE_NOT_FOUND' });
+    return next(specifier, context);
+  },
+});
+const { ENCODERS } = await import(${JSON.stringify(new URL('src/audio/encode.js', ROOT).href)});
+const open = await ENCODERS.mp3.open();
+const encoder = open(24000);
+const tone = Float32Array.from({ length: 24000 }, (_, i) => 0.3 * Math.sin(i * 0.1));
+const bytes = [...encoder.push(tone), ...encoder.end()];
+console.log(bytes.length);
+`;
+
+function encode(samples, rate, open) {
+  const encoder = open(rate);
+  const parts = [];
+  for (let at = 0; at < samples.length; at += 3000)
+    parts.push(encoder.push(samples.subarray(at, at + 3000)));
+  parts.push(encoder.end());
+  return new Uint8Array(Buffer.concat(parts));
+}
+
+function aligned(source, decoded) {
+  let best = { snr: -Infinity, delay: 0 };
+  for (let delay = 0; delay < 2000; delay++) {
+    let signal = 0;
+    let noise = 0;
+    for (let i = 0; i < source.length; i += 4) {
+      signal += source[i] ** 2;
+      noise += (source[i] - (decoded[i + delay] ?? 0)) ** 2;
+    }
+    const value = 10 * Math.log10(signal / noise);
+    if (value > best.snr) best = { snr: value, delay };
+  }
+  return best;
+}
+
+const ffmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
+
+describe('mp3 encoding in JavaScript', () => {
+  test('needs no lamejs', async () => {
+    const pkg = JSON.parse(await readFile(new URL('package.json', ROOT), 'utf8'));
+    for (const field of ['dependencies', 'devDependencies', 'peerDependencies'])
+      assert.equal(pkg[field]?.['@breezystack/lamejs'], undefined, field);
+    const home = new URL('test/integration/fixtures/', ROOT).pathname;
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', unshipped], {
+      encoding: 'utf8',
+      env: { ...process.env, HOME: home, PNPM_HOME: home, ORTLLAMA_MODULE_PATH: '' },
+    });
+    assert.equal(child.status, 0, child.stderr);
+    assert.ok(Number(child.stdout) > 7000, child.stdout);
+  });
+
+  test('round-trips speech at every mp3 sample rate', async () => {
+    const { ENCODERS } = await import('../../src/audio/encode.js');
+    const { decodeWav, resample } = await import('../../src/audio/pcm.js');
+    const open = await ENCODERS.mp3.open();
+    const { samples, rate } = decodeWav(await fixture('wav'));
+    for (const target of [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000]) {
+      const source = resample(samples, rate, target);
+      const bytes = encode(source, target, open);
+      const kbps = (bytes.length * 8) / 1000 / (source.length / target);
+      assert.ok(kbps > 63 && kbps < 70, `${target}: ${kbps.toFixed(1)} kbit/s`);
+      const decoded = await decodeFile(bytes, { rate: target });
+      assert.ok(decoded.length >= source.length + 1057, `${target}: ${decoded.length}`);
+      const { snr: quality, delay } = aligned(source, decoded);
+      assert.equal(delay, 1057, `${target}`);
+      assert.ok(quality > 30, `${target}: ${quality.toFixed(1)} dB`);
+    }
+  });
+
+  test('decodes in ffmpeg to the same samples', { skip: !ffmpeg }, async () => {
+    const { ENCODERS } = await import('../../src/audio/encode.js');
+    const { decodeWav, resample } = await import('../../src/audio/pcm.js');
+    const { samples, rate } = decodeWav(await fixture('wav'));
+    for (const target of [8000, 24000, 44100]) {
+      const bytes = encode(resample(samples, rate, target), target, await ENCODERS.mp3.open());
+      const raw = spawnSync('ffmpeg', ['-v', 'error', '-i', '-', '-f', 'f32le', '-'], {
+        input: bytes,
+        maxBuffer: 1 << 26,
+      }).stdout;
+      const reference = new Float32Array(raw.buffer, raw.byteOffset, raw.length / 4);
+      const decoded = await decodeFile(bytes, { rate: target });
+      assert.equal(decoded.length, reference.length);
+      assert.ok(snr(reference, decoded) > 70, `${target}: ${snr(reference, decoded)}`);
+    }
+  });
+});

@@ -139,7 +139,7 @@ Audio is `audio/pcm` at 8–48 kHz (24 kHz by default). Turns are detected by `s
 `POST /v1/audio/speech` takes `{ model, input, voice, response_format, speed, instructions }`, on [Kokoro-82M](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX).
 
 - `model` defaults to the `speech` role, `voice` to `af_heart`, and `instructions` is accepted and ignored.
-- `response_format` is `wav` (the default), `pcm` (24 kHz mono 16-bit little-endian), `mp3` (`audio/mpeg`, 64 kbit/s), `opus` (Ogg Opus, `audio/opus`, 32 kbit/s) or `flac` (`audio/flac`); `aac` answers `400`. mp3 is encoded by `@breezystack/lamejs` (LGPL-3.0), which ortllama does not ship and finds like a phonemizer (`npm install @breezystack/lamejs`); without it, `mp3` answers `501`.
+- `response_format` is `wav` (the default), `pcm` (24 kHz mono 16-bit little-endian), `mp3` (`audio/mpeg`, 64 kbit/s), `opus` (Ogg Opus, `audio/opus`, 32 kbit/s) or `flac` (`audio/flac`); `aac` answers `400`. mp3 is encoded in JavaScript as MPEG-1, 2 or 2.5 Layer III, mono, at the nearest mp3 sample rate, with constant bitrate and long blocks only, no psychoacoustic model and no gapless header, so a decoder adds about 44 ms of silence at the start at 24 kHz.
 - `input` takes up to 4096 characters. It is split into sentences, long ones at clause marks or spaces, and each piece's audio is sent as soon as it is ready. A piece is synthesized only once the one before it has been written to the socket, or after 250 ms if the client is not reading, so on single-threaded WASM, where a synthesis blocks the program, the first sentence still arrives while the rest is synthesized.
 
 ```sh
