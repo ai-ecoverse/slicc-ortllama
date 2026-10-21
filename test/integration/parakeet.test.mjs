@@ -136,6 +136,38 @@ describe('Parakeet TDT transcription', { skip }, () => {
       });
     });
 
+  test('stamps every token inside the window it was heard in', async (t) => {
+    if (!clips) return t.skip('no export/clips/ in the export');
+    const trimmed = clipNames.map((n) => {
+      const c = clips[n];
+      let from = 0;
+      let to = c.length;
+      while (from < to && Math.abs(c[from]) < 0.02) from++;
+      while (to > from && Math.abs(c[to - 1]) < 0.02) to--;
+      return c.subarray(from, to);
+    });
+    const audio = new Float32Array(trimmed.reduce((n, c) => n + c.length, 0));
+    let at = 0;
+    for (const c of trimmed) {
+      audio.set(c, at);
+      at += c.length;
+    }
+    for (let i = 0; i < audio.length; i++) audio[i] += 0.01 * Math.sin(i * 1.7);
+    await withVariant('q8', async (instance) => {
+      const { segments } = await instance.transcribe(audio);
+      const seeks = [...new Set(segments.map((s) => s.seek))];
+      assert.ok(seeks.length >= 3, `${seeks}`);
+      for (const s of segments) {
+        const start = (s.seek * 160) / 16000;
+        const next = seeks.find((k) => k > s.seek);
+        const end = next === undefined ? audio.length / 16000 : (next * 160) / 16000;
+        assert.ok(s.start >= start - 1e-6 && s.end <= end + 1e-6, JSON.stringify(s));
+      }
+      for (let i = 1; i < segments.length; i++)
+        assert.ok(segments[i].start >= segments[i - 1].end - 1e-6, `segment ${i}`);
+    });
+  });
+
   for (const [variant, bound] of Object.entries(WER))
     test(`keeps ${variant} within ${bound * 100}% WER of PyTorch`, async (t) => {
       if (!clips) return t.skip('no export/clips/ in the export');

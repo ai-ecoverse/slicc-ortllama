@@ -191,8 +191,9 @@ export function createParakeet({
 
   async function decodeWindow(audio, from, to, signal) {
     const shift = (from - features.lead) / features.rate;
-    const end = audio.length / features.rate;
-    const at = (frame) => Math.min(end, Math.max(0, shift + frame * frameSeconds));
+    const start = from / features.rate;
+    const end = to / features.rate;
+    const at = (frame) => Math.min(end, Math.max(start, shift + frame * frameSeconds));
     const seek = Math.round(from / features.hop);
     return (await steps(audio.subarray(from, to), signal))
       .filter((s) => s.token !== config.blank_token_id)
