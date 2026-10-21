@@ -60,12 +60,38 @@ function freeSize(bytes, at, head) {
   return bytes.length - at <= FREE_LIMIT ? bytes.length - at : 0;
 }
 
+function freeSizes(bytes) {
+  const seen = new Map();
+  let scanned = 0;
+  return (at, head) => {
+    const first = at + 4 + sideSize(head);
+    const last = Math.min(bytes.length - 4, at + FREE_LIMIT);
+    for (; scanned <= last; scanned++) {
+      const found = bytes[scanned] === 0xff && frameHeader(bytes, scanned);
+      if (found && !found.size) {
+        if (!seen.has(found.key)) seen.set(found.key, { list: [], start: 0 });
+        seen.get(found.key).list.push(scanned);
+      }
+    }
+    const entry = seen.get(head.key) ?? { list: [], start: 0 };
+    while (entry.start < entry.list.length && entry.list[entry.start] < first) entry.start++;
+    if (entry.start > 1024) {
+      entry.list = entry.list.slice(entry.start);
+      entry.start = 0;
+    }
+    const next = entry.list[entry.start];
+    if (next !== undefined && next <= last) return next - at;
+    return bytes.length - at <= FREE_LIMIT ? bytes.length - at : 0;
+  };
+}
+
 function* frames(bytes) {
+  const free = freeSizes(bytes);
   let lock = null;
   for (let at = id3Size(bytes); at + 4 <= bytes.length; ) {
     const head = frameHeader(bytes, at);
     if (head) {
-      const size = head.size || freeSize(bytes, at, head);
+      const size = head.size || free(at, head);
       const next = at + size;
       const follows = next === bytes.length || frameHeader(bytes, next)?.key === head.key;
       if (size && (head.key === lock || follows)) {
