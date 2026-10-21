@@ -62,7 +62,6 @@
     "fflate": "0.8.3",
     "jpeg-js": "0.4.4",
     "libopus-wasm": "0.4.1",
-    "minimp3-wasm": "0.1.0",
     "onnxruntime-web": "1.30.0",
     "ws": "8.22.0"
   },

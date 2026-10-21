@@ -58,7 +58,49 @@ function fft(p) {
   }
 }
 
+const direct = new Map();
+
+function matrix(n) {
+  let rows = direct.get(n);
+  if (!rows) {
+    const m = n >> 1;
+    rows = new Float64Array(n * m);
+    for (let i = 0; i < n; i++)
+      for (let k = 0; k < m; k++)
+        rows[i * m + k] = Math.cos(((2 * Math.PI) / n) * (i + 0.5 + n / 4) * (k + 0.5));
+    direct.set(n, rows);
+  }
+  return rows;
+}
+
+function slow(input, output, n) {
+  const m = n >> 1;
+  const q = m >> 1;
+  const rows = matrix(n);
+  for (let i = 0; i < n; i++) {
+    if ((i >= q && i < m) || i >= m + q) continue;
+    let sum = 0;
+    for (let k = 0, at = i * m; k < m; k++) sum += input[k] * rows[at + k];
+    output[i] = sum;
+    if (i < q) output[m - 1 - i] = -sum;
+    else output[3 * m - 1 - i] = sum;
+  }
+  return output;
+}
+
+export function mdct(input, output, n) {
+  const m = n >> 1;
+  const rows = matrix(n);
+  for (let k = 0; k < m; k++) {
+    let sum = 0;
+    for (let i = 0; i < n; i++) sum += input[i] * rows[i * m + k];
+    output[k] = sum;
+  }
+  return output;
+}
+
 export function imdct(input, output, n) {
+  if (!Number.isInteger(Math.log2(n))) return slow(input, output, n);
   let p = plans.get(n);
   if (!p) {
     p = plan(n);
