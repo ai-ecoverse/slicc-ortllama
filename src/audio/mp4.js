@@ -84,7 +84,21 @@ function table(view, box, width) {
   return { count, at: box.body + 8 };
 }
 
+function compact(view, box) {
+  const width = view.getUint8(box.body + 7);
+  const count = view.getUint32(box.body + 8);
+  if (![4, 8, 16].includes(width) || box.body + 12 + Math.ceil((count * width) / 8) > box.end)
+    throw corrupt();
+  return Array.from({ length: count }, (_, i) => {
+    const at = box.body + 12;
+    if (width === 16) return view.getUint16(at + i * 2);
+    if (width === 8) return view.getUint8(at + i);
+    return (view.getUint8(at + (i >> 1)) >> (i & 1 ? 0 : 4)) & 15;
+  });
+}
+
 function sizes(view, box) {
+  if (box.type === 'stz2') return compact(view, box);
   const fixed = view.getUint32(box.body + 4);
   const count = view.getUint32(box.body + 8);
   if (fixed && fixed * count > view.byteLength) throw corrupt();
@@ -255,8 +269,8 @@ export function mp4Audio(bytes) {
   const entry = sampleEntry(bytes, view, audio.stsd);
   const chunks = audio.stco ?? audio.co64;
   const samples =
-    audio.stsz && audio.stsc && chunks
-      ? chunked(view, audio.stsc, offsets(view, chunks), sizes(view, audio.stsz))
+    (audio.stsz || audio.stz2) && audio.stsc && chunks
+      ? chunked(view, audio.stsc, offsets(view, chunks), sizes(view, audio.stsz ?? audio.stz2))
       : [];
   const id = audio.tkhd
     ? view.getUint32(audio.tkhd.body + (full(view, audio.tkhd).version ? 20 : 12))

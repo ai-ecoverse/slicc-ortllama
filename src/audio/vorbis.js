@@ -48,7 +48,9 @@ class Bits {
 
 function header(bits) {
   if (bits.read(24) !== 0x564342) throw corrupt();
-  return { dimensions: bits.read(16), entries: bits.read(24) };
+  const dimensions = bits.read(16);
+  if (!dimensions) throw corrupt();
+  return { dimensions, entries: bits.read(24) };
 }
 
 function unpackFloat(x) {
@@ -389,7 +391,7 @@ function floorCurve(floor, ys, out, half) {
 function vqDecode(bits, r, vq, target, offset) {
   const dims = vq.dimensions;
   if (r.type === 0) {
-    const step = r.size / dims;
+    const step = Math.floor(r.size / dims);
     for (let j = 0; j < step; j++) {
       const e = decode(bits, vq);
       if (e < 0) return false;
