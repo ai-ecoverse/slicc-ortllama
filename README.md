@@ -232,11 +232,11 @@ Speed for four sentences (20 s of audio) on an M4 Max, as real-time factor and t
 
 | Variant | Host CPU | Host WebGPU | Kernel WASM | Kernel WebGPU |
 | --- | --- | --- | --- | --- |
-| `fp32` | 0.044, 169 ms | 0.12, 469 ms | 0.25 | 0.49 |
-| `q8` | 0.035, 130 ms | 0.11, 431 ms | 0.56 | 0.20 |
-| `fp16` | 0.057, 224 ms | 0.13, 452 ms | 0.28 | 0.47 |
+| `fp32` | 0.044, 169 ms | 0.12, 469 ms | 0.24 | 0.23 |
+| `q8` | 0.035, 130 ms | 0.11, 431 ms | 0.55 | 0.18 |
+| `fp16` | 0.057, 224 ms | 0.13, 452 ms | 0.27 | 0.22 |
 
-Phonon loads on the CPU on the host and on WASM in the kernel. Each 80 ms frame takes three small graph runs, so per-run overhead decides the speed, and WebGPU pays the most of it. Set `ORTLLAMA_EP` to use WebGPU anyway. Whisper large-v3-turbo hears 20 test sentences with a word error rate of 7.4 % from Phonon `fp32`, 6.5 % from `q8` and 7.4 % from ptts itself. It hears 5.3 % from Kokoro's `af_heart`. Every difference in Phonon's transcripts is the way a number or symbol is written, such as "9" for "nine", and none is a misread word.
+Phonon loads on the CPU on the host and on WASM in the kernel. Each 80 ms frame takes three small graph runs, so per-run overhead decides the speed. On the host, WebGPU pays the most of it; in the kernel, WebGPU is about as fast as WASM, and only `q8` gains from it. Set `ORTLLAMA_EP` to use WebGPU anyway. Whisper large-v3-turbo hears 20 test sentences with a word error rate of 7.4 % from Phonon `fp32`, 6.5 % from `q8` and 7.4 % from ptts itself. It hears 5.3 % from Kokoro's `af_heart`. Every difference in Phonon's transcripts is the way a number or symbol is written, such as "9" for "nine", and none is a misread word.
 
 ### pi-audio
 
