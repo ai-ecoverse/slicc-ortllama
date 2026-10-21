@@ -1,5 +1,5 @@
 import { createFlacEncoder } from './flac.js';
-import { mp3Encoder } from './mp3.js';
+import { createMp3Encoder } from './mp3-encoder.js';
 import { opusEncoder } from './opus.js';
 import { concat, encodePcm16, wavHeader } from './pcm.js';
 
@@ -23,7 +23,7 @@ function wavEncoder(rate) {
 export const ENCODERS = {
   wav: { type: 'audio/wav', open: async () => wavEncoder },
   pcm: { type: 'audio/pcm', open: async () => pcmEncoder },
-  mp3: { type: 'audio/mpeg', open: () => mp3Encoder() },
+  mp3: { type: 'audio/mpeg', open: async () => createMp3Encoder },
   opus: { type: 'audio/opus', open: () => opusEncoder() },
   flac: { type: 'audio/flac', open: async () => createFlacEncoder },
 };

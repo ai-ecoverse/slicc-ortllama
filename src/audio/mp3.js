@@ -1,8 +1,6 @@
-import { optional } from '../engines/optional.js';
 import { createLayer3, frameHeader } from './layer3.js';
-import { AudioFormatError, encodePcm16 } from './pcm.js';
+import { AudioFormatError } from './pcm.js';
 
-const BITRATE = 64;
 const DECODER_DELAY = 529;
 const FREE_LIMIT = 2884;
 const LAME = new Set(['LAME', 'Lavf', 'Lavc']);
@@ -127,17 +125,4 @@ export function* mp3Channels(bytes, options) {
 export function* decodeMp3(bytes) {
   for (const { channels, rate } of mp3Channels(bytes, { mono: true }))
     yield { samples: channels[0], rate };
-}
-
-const copy = (out) => new Uint8Array(out.buffer, out.byteOffset, out.byteLength).slice();
-
-export async function mp3Encoder(load = () => optional('@breezystack/lamejs')) {
-  const { Mp3Encoder } = await load();
-  return (rate) => {
-    const encoder = new Mp3Encoder(1, rate, BITRATE);
-    return {
-      push: (samples) => copy(encoder.encodeBuffer(new Int16Array(encodePcm16(samples).buffer))),
-      end: () => copy(encoder.flush()),
-    };
-  };
 }
