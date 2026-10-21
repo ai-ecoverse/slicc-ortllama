@@ -92,4 +92,13 @@ describe('mp3 decoding in JavaScript', () => {
     );
     assert.ok(performance.now() - started < 2000);
   });
+
+  test('answers 400 when the sample rate changes mid-stream', async () => {
+    const first = await fixture('mp3', 'mix-mpeg25');
+    const second = await fixture('mp3', 'tone-plain');
+    const joined = new Uint8Array(first.length + second.length);
+    joined.set(first);
+    joined.set(second, first.length);
+    await assert.rejects(decodeFile(joined), /the audio changes its sample rate/);
+  });
 });

@@ -64,11 +64,11 @@ function* frames(bytes) {
   let lock = null;
   for (let at = id3Size(bytes); at + 4 <= bytes.length; ) {
     const head = frameHeader(bytes, at);
-    if (head && (lock === null || head.key === lock)) {
+    if (head) {
       const size = head.size || freeSize(bytes, at, head);
       const next = at + size;
       const follows = next === bytes.length || frameHeader(bytes, next)?.key === head.key;
-      if (size && (lock !== null || follows)) {
+      if (size && (head.key === lock || follows)) {
         if (head.layer !== 3)
           throw new AudioFormatError(
             `MPEG audio layer ${'I'.repeat(head.layer)} is not supported; send mp3 (layer III)`
