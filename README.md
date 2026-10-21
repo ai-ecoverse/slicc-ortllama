@@ -100,7 +100,7 @@ User messages may carry images as OpenAI `image_url` parts, which is what pi-ai 
 
 ### System One
 
-`POST /v1/systemone` speaks TypeSafe's System One protocol on [kev.js](https://github.com/ai-ecoverse/kev.js). Requests to a kev.js vision bundle (such as `ai-ecoverse/kev.js/kev-0.8b-vision`) take an `image` field, a `data:` URL string or `{ "url": … }`, decoded to RGBA for kev.js; text-only bundles answer it with `400`. pi-ai's System One client does not send images yet. Bundles known to work, with the load time and a warm three-question request (an image request for vision bundles) on an M4 Max:
+`POST /v1/systemone` speaks TypeSafe's System One protocol on [kev.js](https://github.com/ai-ecoverse/kev.js). Requests to a kev.js vision bundle (such as `ai-ecoverse/kev.js/kev-0.8b-vision`) or to kev-ministral take an `image` field, a `data:` URL string or `{ "url": … }`, decoded to RGBA for kev.js; text-only bundles answer it with `400`. pi-ai's System One client does not send images yet. Bundles known to work, with the load time and a warm three-question request (an image request for vision bundles) on an M4 Max:
 
 | Model | Download | Host CPU | Host WebGPU | Kernel WebGPU load |
 | --- | --- | --- | --- | --- |
@@ -109,6 +109,20 @@ User messages may carry images as OpenAI `image_url` parts, which is what pi-ai 
 | `ai-ecoverse/kev.js/kev-9b` | 8.9 GB | 7.8 s, 0.9–1.5 s | 4.4 s, 330 ms | 27 s |
 
 Loading a bundle takes about its size in memory. On a host, onnxruntime-node opens the graph by path and reads the weights itself: `kev-9b` peaks at 9.0 GB, `kev-4b` at 5.2 GB. In the kernel, onnxruntime-web asks for each weight's bytes while it builds the session, and ortllama reads them then, holding at most 1 GiB of weight files: for `kev-9b`, Chrome's page process peaks at 3.7 GiB and its GPU process at 8.1 GiB. jsh reads a whole file for each ranged read ([slicc-jsh#401](https://github.com/ai-ecoverse/slicc-jsh/issues/401)), so the larger bundles load about twice as slowly in the kernel as they would with every weight held at once. Both need kev.js 1.1 or later; with 1.0, every weight is read into memory first, and `kev-9b` peaks at about 20 GB.
+
+[kev-ministral](https://huggingface.co/ai-ecoverse/kev-ministral) (`ai-ecoverse/kev-ministral/kev-ministral-3b`, variant `q8f32`, 6.6 GB) is the decision model from the web-browsing VLM work. It is Ministral-3-3B-Base with a Kev decision LoRA, left unmerged behind the decoder's `lora_scale` input, plus a Kev pointer head and Pixtral's vision encoder. kev.js 1.2 or later runs it through `loadKevMinistral`, and the System One engine finds it by its `manifest.json` (graphs in `onnx/`, no `variants`). It takes an `image` like the kev.js vision bundles: Pixtral's resize, so a 1024 × 576 screenshot becomes 798 tokens after `<state>`. Fetch it with `hf download ai-ecoverse/kev-ministral --include 'kev-ministral-3b/*'`.
+
+On an M4 Max it loads in 5.1 s on the host CPU, 7.7 s on host WebGPU and 7.3–7.6 s in the kernel. The three-question request takes 0.71 s, 0.50 s and 0.50 s. A webrunner step from its demo (500 to 2,150 tokens of page and menu, plus 798 for a 1024 × 576 screenshot) takes a median of 22 s on the CPU, 4.2 s on host WebGPU and 4.2 s in the kernel; without the screenshot, 10 s, 1.8 s and 1.8 s. Loading peaks at a memory footprint of 6.6 GB on the host CPU and 12.6 GB on host WebGPU. In the kernel, Chrome's page process peaks at 11.1 GiB and its GPU process at 10 GiB.
+
+Its adapter was trained for webrunner's menus, and that is where it is strongest. On Kev's 300 held-out transfer-v4 questions (raw logits) it lands between Kev-0.8B and Kev-4B:
+
+| Model | Download | transfer-v4 accuracy / Brier | Demo webrunner steps right, with / without the screenshot | Host WebGPU load, three-question request |
+| --- | --- | --- | --- | --- |
+| `ai-ecoverse/kev.js/kev-0.8b` (`decisions`), `kev-0.8b-vision` | 0.84 GB, 1.0 GB | 0.640 / 0.492 | 4 / 6 of 10 | 0.8 s, 114 ms |
+| `ai-ecoverse/kev-ministral/kev-ministral-3b` | 6.6 GB | 0.733 / 0.414 | 7 / 7 of 10 | 7.7 s, 501 ms |
+| `ai-ecoverse/kev.js/kev-4b`, `kev-4b-vision` | 4.7 GB, 5.4 GB | 0.800 / 0.281 | 6 / 8 of 10 | 4.0 s, 353 ms |
+
+`decisions` stays on Kev-0.8B: kev-ministral is eight times its size, takes ten times as long to load and four times as long per request, and Kev-4B is the better general model at a smaller size. Point a client at kev-ministral for browser-agent steps. Its model card reports 69 % on Mind2Web's unseen websites, against 57.6 % for `kev-4b-vision`. The same weights with `lora_scale = 0` are the stock base model: kev.js's `generate` produces text from them, but ortllama does not serve that yet.
 
 [Jev-Omni](https://github.com/ai-ecoverse/jev-omni.js) (`ai-ecoverse/jev-omni.js/jev-omni`, Gemma 4 12B with a 256-way decision head, 13.6 GB) answers the same requests through [jev-omni.js](https://github.com/ai-ecoverse/jev-omni.js), with `@ai-ecoverse/jev-omni.js` installed. Each question is one forward pass over the state, its instructions and its options: a choice's criteria, `no` and `yes` for a noul, a score's levels. Answers, confidences and `usage` follow the same rules as Kev's. Jev-Omni takes 2 to 256 options per question, so a choice with one criterion answers `400`. An `image` is embedded once per request. On WebGPU, onnxruntime-web limits a prompt to about 8,000 tokens; a longer one answers `422` with code `context_length_exceeded`. On an M4 Max, it loads in 7.3 s on the host CPU and answers the three-question request in 3 s; on host WebGPU, 2.6–5.8 s and 0.9 s; in the kernel, 13–23 s and 1–1.2 s. Loading peaks at 13.3 GB on host WebGPU (15.9 GB on the CPU), and in the kernel at 3.3 GiB in Chrome's page process and 13 GiB in its GPU process. That needs jev-omni.js 0.2 or later: 0.1 reads every weight into memory first, which peaks at 30 GB on the host and fails to allocate in the kernel.
 
@@ -282,7 +296,7 @@ A model whose library is missing is still listed, and requests for it answer `50
 | kokoro | 3 sentences as token IDs, so the phonemizer does not matter, with a 40-band log-mel summary | the mel spectrogram stays within 2 dB and the length within 5 %; phonemes are compared and reported |
 | silero | speech probabilities for every 32 ms frame of two clips | mean change ≤ 0.01, at most 0.1, and no clear speech/silence flip |
 
-The tolerances leave room over what WebGPU differs from CPU, measured on host Node and in slicc-kernel (both alike): decoder mean 0.026–0.063 nats (max 0.48, flips only below a 0.55 margin; Ministral 3 3B to 14B), System One mean 0.006 (max 0.027), Kokoro 0.15–0.24 dB, Whisper and Silero none. Kokoro's `q8` variant lands at 2–5 dB and its `fp16` on WebGPU, which sounds garbled, at 25 dB. Fixtures hold the default variant; other variants can fall outside them, and `check` says so. `node scripts/fixtures.mjs <model>…` writes them on the host CPU (`node scripts/fixtures.mjs audio` makes the clips with Kokoro).
+The tolerances leave room over what WebGPU differs from CPU, measured on host Node and in slicc-kernel (both alike): decoder mean 0.026–0.063 nats (max 0.48, flips only below a 0.55 margin; Ministral 3 3B to 14B), System One mean 0.006 (max 0.027 for Kev, 0.051 for kev-ministral), Kokoro 0.15–0.24 dB, Whisper and Silero none. Kokoro's `q8` variant lands at 2–5 dB and its `fp16` on WebGPU, which sounds garbled, at 25 dB. Fixtures hold the default variant; other variants can fall outside them, and `check` says so. `node scripts/fixtures.mjs <model>…` writes them on the host CPU (`node scripts/fixtures.mjs audio` makes the clips with Kokoro).
 
 ## Execution providers
 
@@ -338,6 +352,7 @@ Each integration test runs when its models are in the Hugging Face cache; `ORTLL
 | Tests | Models |
 | --- | --- |
 | Kev | `ai-ecoverse/kev.js/kev-0.8b` |
+| kev-ministral | `ai-ecoverse/kev-ministral/kev-ministral-3b` |
 | Whisper | `onnx-community/whisper-tiny` |
 | Realtime | `onnx-community/whisper-tiny`, `onnx-community/silero-vad` |
 | Chat | `mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16` |

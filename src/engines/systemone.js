@@ -4,6 +4,7 @@ import { imageFromUrl } from '../images.js';
 import { optional } from './optional.js';
 
 export const KEV = '@ai-ecoverse/kev.js';
+export const MINISTRAL_KEV = '1.2.0';
 
 const HELD_BYTES = 2 ** 30;
 
@@ -68,11 +69,60 @@ export async function detectBundle(files, accept) {
   };
 }
 
+const MINISTRAL_VARIANT = 'q8f32';
+const MINISTRAL_CONTEXT = 73728;
+const MINISTRAL_FILES = ['tokenizer.json', 'tokenizer_config.json', 'head.json', 'head.bin'];
+const MINISTRAL_GRAPHS = ['embed_tokens', 'decoder_model_merged', 'vision_encoder'];
+
+function isMinistral(manifest) {
+  const files = manifest?.files;
+  return (
+    Array.isArray(files?.embed_tokens) &&
+    Array.isArray(files?.decoder_model_merged) &&
+    Number.isInteger(manifest.layers)
+  );
+}
+
+function ministralNeeded(manifest) {
+  const graphs = MINISTRAL_GRAPHS.filter((name) => Array.isArray(manifest.files[name]));
+  return [
+    'manifest.json',
+    ...MINISTRAL_FILES,
+    ...graphs.flatMap((name) => [
+      `onnx/${name}.onnx`,
+      ...manifest.files[name].map((f) => `onnx/${f}`),
+    ]),
+  ];
+}
+
+async function detectMinistral(files) {
+  if (!(await files.exists('manifest.json'))) return null;
+  let manifest;
+  try {
+    manifest = await files.json('manifest.json');
+  } catch {
+    return null;
+  }
+  if (!isMinistral(manifest)) return null;
+  if (!(await files.exists('onnx/decoder_model_merged.onnx'))) return null;
+  return {
+    ministral: true,
+    variants: [MINISTRAL_VARIANT],
+    defaultVariant: MINISTRAL_VARIANT,
+    inputModalities: manifest.files.vision_encoder ? ['text', 'image'] : ['text'],
+    outputModalities: ['decisions'],
+    contextLength: MINISTRAL_CONTEXT,
+    manifest,
+  };
+}
+
 function weights(part) {
   return part ? [part.model, ...(part.data ?? [])] : [];
 }
 
-function needed(manifest, variant) {
+function needed(info, variant) {
+  const { manifest } = info;
+  if (info.ministral) return ministralNeeded(manifest);
   return [
     'manifest.json',
     ...Object.values(manifest.files),
@@ -86,17 +136,44 @@ function folder(part) {
   return dir === '.' ? weights(part) : [`${dir}/*`];
 }
 
+function serving(kev, { ValidationError, ContextOverflow }) {
+  return {
+    probs: (record, image) => kev.probs(record, image),
+    async systemOne(request) {
+      if (request.image !== undefined && !kev.acceptsImages)
+        throw badRequest('this System One model takes no images', 'image');
+      try {
+        return await kev.systemOne(request);
+      } catch (error) {
+        if (error instanceof ValidationError) throw badRequest(error.message);
+        if (request.image !== undefined && error instanceof RangeError)
+          throw badRequest(
+            `the image does not fit this model's vision encoder: ${error.message}`,
+            'image'
+          );
+        if (error instanceof ContextOverflow)
+          throw new HttpError(422, error.message, { code: 'context_length_exceeded' });
+        throw error;
+      }
+    },
+    release: () => kev.release(),
+  };
+}
+
 export const systemone = {
   name: 'systemone',
   capability: 'systemone',
-  detect: (files) => detectBundle(files, (manifest) => manifest.special),
+  async detect(files) {
+    return (await detectBundle(files, (manifest) => manifest.special)) ?? detectMinistral(files);
+  },
   async missing(files, info, variant) {
     const out = [];
-    for (const rel of needed(info.manifest, variant)) if (!(await files.exists(rel))) out.push(rel);
+    for (const rel of needed(info, variant)) if (!(await files.exists(rel))) out.push(rel);
     return out;
   },
   include(info, variant) {
     const { manifest } = info;
+    if (info.ministral) return ['manifest.json', ...MINISTRAL_FILES, 'onnx/*'];
     return [
       'manifest.json',
       ...Object.values(manifest.files),
@@ -104,39 +181,25 @@ export const systemone = {
       ...(manifest.vision ? folder(manifest.vision) : []),
     ];
   },
-  async load({ backend, files, variant, overrides = {}, library = () => optional(KEV) }) {
-    const { loadKev, ValidationError, ContextOverflow } = await library();
-    const weights = localWeights(backend, files);
-    const kev = await loadKev((rel) => files.read(rel), {
-      ...weights.options,
+  async load({ backend, files, variant, info, overrides = {}, library = () => optional(KEV) }) {
+    const kevjs = await library();
+    const ministral = info?.ministral ?? false;
+    const loader = ministral ? kevjs.loadKevMinistral : kevjs.loadKev;
+    if (typeof loader !== 'function')
+      throw new HttpError(501, `this model needs ${KEV} ${MINISTRAL_KEV} or later`, {
+        code: 'engine_unavailable',
+      });
+    const local = localWeights(backend, files);
+    const kev = await loader((rel) => files.read(rel), {
+      ...local.options,
       ort: backend.ort,
-      variant,
+      ...(ministral ? {} : { variant }),
       executionProviders: backend.executionProviders,
       sessionOptions: backend.sessionOptions,
       cacheName: null,
       ...overrides,
-    }).finally(weights.clear);
-    return {
-      probs: (record, image) => kev.probs(record, image),
-      async systemOne(request) {
-        if (request.image !== undefined && !kev.acceptsImages)
-          throw badRequest('this System One model takes no images', 'image');
-        try {
-          return await kev.systemOne(request);
-        } catch (error) {
-          if (error instanceof ValidationError) throw badRequest(error.message);
-          if (request.image !== undefined && error instanceof RangeError)
-            throw badRequest(
-              `the image does not fit this model's vision encoder: ${error.message}`,
-              'image'
-            );
-          if (error instanceof ContextOverflow)
-            throw new HttpError(422, error.message, { code: 'context_length_exceeded' });
-          throw error;
-        }
-      },
-      release: () => kev.release(),
-    };
+    }).finally(local.clear);
+    return serving(kev, kevjs);
   },
 };
 
