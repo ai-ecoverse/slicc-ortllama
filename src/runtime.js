@@ -103,12 +103,12 @@ export class Runtime {
         this.running = false;
         this.pump();
       },
-      yield: () => {
-        if (!this.queue.some((j) => j.priority < priority && this.fits(j)))
+      yield: (ready = null) => {
+        if (!ready && !this.queue.some((j) => j.priority < priority && this.fits(j)))
           return Promise.resolve();
         const release = turn.end;
         return new Promise((resume) => {
-          this.queue.push({
+          const job = {
             priority,
             seq: -1,
             task: () =>
@@ -118,7 +118,13 @@ export class Runtime {
               }),
             resolve: noop,
             reject: noop,
+            ready,
+          };
+          ready?.catch(noop).then(() => {
+            job.ready = null;
+            this.pump();
           });
+          this.queue.push(job);
           release();
         });
       },
@@ -134,7 +140,7 @@ export class Runtime {
         entry.busy++;
         try {
           if (signal?.aborted) throw abortError(signal);
-          return await fn(entry.instance, entry, () => turn.yield());
+          return await fn(entry.instance, entry, (ready) => turn.yield(ready));
         } finally {
           entry.busy--;
           this.touch(entry);

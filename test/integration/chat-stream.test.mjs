@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
-import { createRuntime, startServer } from '../../src/index.js';
+import { chatRoute } from '../../src/chat.js';
+import { createRuntime, PRIORITY, startServer } from '../../src/index.js';
 
 const TOKENS = ['One', ' two', ' three', ' four', ' five'];
 const SPIN_MS = 150;
@@ -81,4 +82,29 @@ describe('chat streams token by token from a synchronous engine', () => {
     const message = `${report}; tokens started at ${generated} ms`;
     for (let i = 0; i < TOKENS.length - 1; i++) assert.ok(arrivals[i].at < starts[i + 1], message);
   });
+});
+
+test('a more urgent job runs while a stream waits for its client to read', async () => {
+  const timeline = [];
+  const resolved = blockingEngine(timeline);
+  const catalog = { aliases: {}, list: async () => [], resolve: async () => resolved };
+  const runtime = createRuntime({
+    env: {},
+    backend: async () => ({ track: 'node', executionProviders: ['cpu'] }),
+  });
+  const route = chatRoute({ catalog, runtime });
+  const { events } = await route.handle({
+    body: { stream: true, messages: [{ role: 'user', content: 'Count.' }] },
+  });
+  const asked = performance.now();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const ran = await runtime.run(PRIORITY.realtime, async () => performance.now());
+  let chunks = 0;
+  for await (const _ of events) chunks++;
+  await runtime.close();
+  assert.equal(chunks, TOKENS.length + 2);
+  assert.ok(
+    ran < timeline[0].at,
+    `the urgent job ran ${Math.round(ran - asked)} ms after the stream started, the first token at ${Math.round(timeline[0].at - asked)} ms`
+  );
 });

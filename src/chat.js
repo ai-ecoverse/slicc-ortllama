@@ -316,12 +316,7 @@ export function chatRoute({
         (instance, _entry, yieldTurn) =>
           instance.chat(parsed.request, {
             signal,
-            yieldTurn: parsed.stream
-              ? async () => {
-                  await yieldTurn();
-                  await flushed(events);
-                }
-              : yieldTurn,
+            yieldTurn: parsed.stream ? () => yieldTurn(flushed(events)) : yieldTurn,
             emit(event) {
               if (event.type === 'start') onStart();
               events.push(event);
