@@ -225,6 +225,7 @@ export function createChat({
     const sampling = samplingFor(request, defaults, banned);
     if (signal?.aborted) throw signal.reason;
     emit({ type: 'start', promptTokens: ids.length });
+    await yieldTurn();
     const out = output(request, emit);
     const times = { start: now() };
     const taken = await cache.take(prompt.keys);
