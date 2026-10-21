@@ -122,16 +122,20 @@ export function authorized(req, apiKey) {
   return header === `Bearer ${apiKey}`;
 }
 
-async function sendEvents(res, events, headers) {
+async function sendEvents(res, events, headers, signal) {
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-cache',
     ...headers,
   });
+  const aborted = abortion(signal);
   try {
     for await (const event of events) {
       if (res.destroyed) return;
-      res.write(`data: ${JSON.stringify(event)}\n\n`);
+      const written = new Promise((resolve) =>
+        res.write(`data: ${JSON.stringify(event)}\n\n`, resolve)
+      );
+      await Promise.race([written, aborted]);
     }
     res.end('data: [DONE]\n\n');
   } catch (error) {
@@ -140,7 +144,7 @@ async function sendEvents(res, events, headers) {
 }
 
 function respond(res, result, { cors, send, signal }) {
-  if (result?.events) return sendEvents(res, result.events, cors);
+  if (result?.events) return sendEvents(res, result.events, cors, signal);
   if (result?.stream) return pipe(res, result, cors, signal);
   send(result?.status ?? 200, result?.body ?? result);
 }

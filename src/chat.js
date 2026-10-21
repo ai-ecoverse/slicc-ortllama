@@ -193,6 +193,7 @@ export function parseChatRequest(body) {
 function channel() {
   const items = [];
   let wake = null;
+  let idle = null;
   let done = false;
   let error = null;
   const poke = () => {
@@ -213,12 +214,20 @@ function channel() {
       done = true;
       poke();
     },
+    idle() {
+      return wake ? Promise.resolve() : new Promise((resolve) => (idle = resolve));
+    },
     async *[Symbol.asyncIterator]() {
       for (;;) {
         if (items.length > 0) yield items.shift();
         else if (error) throw error;
         else if (done) return;
-        else await new Promise((resolve) => (wake = resolve));
+        else
+          await new Promise((resolve) => {
+            wake = resolve;
+            idle?.();
+            idle = null;
+          });
       }
     },
   };
@@ -263,6 +272,18 @@ function message(events) {
 
 export const DEFAULT_MAX_TOKENS = 8192;
 
+const FLUSH_MS = 250;
+
+async function flushed(events) {
+  let timer;
+  await Promise.race([
+    events.idle(),
+    new Promise((resolve) => (timer = setTimeout(resolve, FLUSH_MS))),
+  ]);
+  clearTimeout(timer);
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
 export function chatRoute({
   catalog,
   runtime,
@@ -295,7 +316,12 @@ export function chatRoute({
         (instance, _entry, yieldTurn) =>
           instance.chat(parsed.request, {
             signal,
-            yieldTurn,
+            yieldTurn: parsed.stream
+              ? async () => {
+                  await yieldTurn();
+                  await flushed(events);
+                }
+              : yieldTurn,
             emit(event) {
               if (event.type === 'start') onStart();
               events.push(event);
