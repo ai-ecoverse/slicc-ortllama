@@ -44,10 +44,14 @@
     "@ai-ecoverse/kev.js": "1.1.1",
     "@ai-ecoverse/pi-audio": "1.27.2",
     "@ai-ecoverse/slicc-shared-web": "1.29.16",
+    "@audio/decode-aac": "1.6.0",
+    "@audio/encode-aac": "1.2.1",
     "@biomejs/biome": "2.5.15",
     "@earendil-works/pi-ai": "1.3.0",
+    "@mediabunny/aac-encoder": "1.62.0",
     "espeak-ng": "1.0.2",
     "lefthook": "2.2.2",
+    "mediabunny": "1.62.0",
     "onnxruntime-node": "1.30.0",
     "phonemize": "2.0.1",
     "phonemizer": "1.2.1",
@@ -76,7 +80,11 @@
   "peerDependencies": {
     "@ai-ecoverse/jev-omni.js": "0.2.0",
     "@ai-ecoverse/kev.js": "1.1.1",
+    "@audio/decode-aac": "1.6.0",
+    "@audio/encode-aac": "1.2.1",
+    "@mediabunny/aac-encoder": "1.62.0",
     "espeak-ng": "1.0.2",
+    "mediabunny": "1.62.0",
     "onnxruntime-node": "1.30.0",
     "phonemize": "2.0.1",
     "phonemizer": "1.2.1"
@@ -88,7 +96,19 @@
     "@ai-ecoverse/kev.js": {
       "optional": true
     },
+    "@audio/decode-aac": {
+      "optional": true
+    },
+    "@audio/encode-aac": {
+      "optional": true
+    },
+    "@mediabunny/aac-encoder": {
+      "optional": true
+    },
     "espeak-ng": {
+      "optional": true
+    },
+    "mediabunny": {
       "optional": true
     },
     "onnxruntime-node": {

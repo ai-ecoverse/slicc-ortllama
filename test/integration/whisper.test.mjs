@@ -3,6 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { after, before, describe, test } from 'node:test';
 import { transcribe } from '@ai-ecoverse/pi-audio';
 import { registerOpenAI } from '@ai-ecoverse/pi-audio/openai';
+import { createAacCodec, PEERS } from '../../src/audio/aac-codec.js';
+import { ENCODERS } from '../../src/audio/encode.js';
+import { concat, decodeWav, resample } from '../../src/audio/pcm.js';
 import { wordErrorRate } from '../../src/engines/whisper.js';
 import { openCatalog, startServer } from '../../src/index.js';
 import { transcriptionModel } from '../../src/pi-audio.js';
@@ -104,6 +107,24 @@ describe('Whisper transcription through pi-audio', { skip }, () => {
       body: form,
     });
     assert.equal((await memo.json()).duration, 2.671);
+  });
+
+  test('transcribes the fox encoded to aac by each encoder peer to the same text as the WAV', async () => {
+    const heard = async (data, mimeType) =>
+      (await transcribe(model, { data, mimeType }, { apiKey: 'x' })).text;
+    const text = await heard(wav, 'audio/wav');
+    const { samples, rate } = decodeWav(wav);
+    const fox = resample(samples, rate, 24000);
+    for (const set of PEERS.encode) {
+      const load = (name) =>
+        set.includes(name)
+          ? import(name)
+          : Promise.reject(Object.assign(new Error(name), { code: 'engine_unavailable' }));
+      const aac = createAacCodec({ scope: {}, load });
+      const encoder = await (await ENCODERS.aac.open({ aac }))(24000);
+      const adts = concat([await encoder.push(fox), await encoder.end()]);
+      assert.equal((await heard(adts, 'audio/aac')).toLowerCase(), text.toLowerCase(), set[0]);
+    }
   });
 
   test('decodes a clip longer than 30 seconds in windows and detects languages', async () => {

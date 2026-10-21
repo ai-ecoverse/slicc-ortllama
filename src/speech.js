@@ -1,4 +1,5 @@
 import { ENCODERS } from './audio/encode.js';
+import { AudioFormatError } from './audio/pcm.js';
 import { badRequest } from './http/errors.js';
 import { splitLong, splitSentences } from './kokoro/text.js';
 import { PRIORITY } from './runtime.js';
@@ -100,13 +101,13 @@ async function* synthesize(context) {
       const sentence = await planned;
       encoder ??= await context.open(sentence.rate);
       for (const pending of sentence.audio) {
-        const bytes = encoder.push(await pending);
+        const bytes = await encoder.push(await pending);
         if (bytes.length) yield bytes;
         gate.pass();
       }
       planned = sentence.next;
     }
-    const tail = encoder.end();
+    const tail = await encoder.end();
     if (tail.length) yield tail;
   } finally {
     gate.pass(Number.POSITIVE_INFINITY);
@@ -114,7 +115,16 @@ async function* synthesize(context) {
   }
 }
 
-export function speechRoute({ catalog, runtime }) {
+async function opener(format, aac) {
+  try {
+    return await format.open({ aac });
+  } catch (error) {
+    if (!(error instanceof AudioFormatError)) throw error;
+    throw badRequest(error.message, 'response_format');
+  }
+}
+
+export function speechRoute({ catalog, runtime, aac }) {
   return {
     async handle({ body, signal }) {
       const request = speechRequest(body);
@@ -122,7 +132,7 @@ export function speechRoute({ catalog, runtime }) {
       if (resolved.engine.capability !== 'speech')
         throw badRequest(`model ${resolved.id} does not synthesize speech`, 'model');
       const format = ENCODERS[request.format];
-      const open = await format.open();
+      const open = await opener(format, aac);
       return {
         headers: { 'content-type': format.type },
         stream: synthesize({ resolved, runtime, request, signal, open }),
