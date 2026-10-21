@@ -62,6 +62,20 @@ const SENTENCES = [
   { name: 'siwis', voice: 'ff_siwis', text: 'Le train pour Lyon part dans dix minutes.' },
 ];
 
+const PHONON_SENTENCES = [
+  {
+    name: 'museum',
+    voice: 'easton',
+    text: 'The museum opens at nine, and the tickets cost $12.50.',
+  },
+  {
+    name: 'umbrella',
+    voice: 'freya',
+    text: 'Could you bring the umbrella? It looks like rain this afternoon.',
+  },
+  { name: 'email', voice: 'zoey', text: 'Send the report to jane.doe@example.com before Friday.' },
+];
+
 const PROMPTS = [
   {
     name: 'capital',
@@ -215,6 +229,24 @@ async function kokoroFixtures(instance) {
   return out;
 }
 
+async function phononFixtures(instance) {
+  const out = [];
+  for (const s of PHONON_SENTENCES) {
+    const chunks = await instance.tokens(s.text, { voice: s.voice });
+    const parts = [];
+    for (const c of chunks)
+      parts.push(await instance.synthesize(c, { voice: s.voice, temperature: 0 }));
+    const samples = new Float32Array(parts.reduce((n, p) => n + p.length, 0));
+    let at = 0;
+    for (const p of parts) {
+      samples.set(p, at);
+      at += p.length;
+    }
+    out.push({ ...s, ids: chunks.flatMap((c) => c.tokens), ...spectrum(samples) });
+  }
+  return out;
+}
+
 async function decoderFixtures(instance) {
   const out = [];
   for (const p of PROMPTS) {
@@ -289,6 +321,7 @@ const BUILDERS = {
   parakeet: parakeetFixtures,
   silero: sileroFixtures,
   kokoro: kokoroFixtures,
+  phonon: phononFixtures,
   decoder: decoderFixtures,
   systemone: systemoneFixtures,
   jev: (instance, resolved) => systemoneFixtures(instance, resolved, decisionRecord, 2),
