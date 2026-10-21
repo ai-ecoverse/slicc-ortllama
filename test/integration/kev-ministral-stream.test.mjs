@@ -6,6 +6,7 @@ import { createRuntime, startServer } from '../../src/index.js';
 
 const WORDS = 6;
 const SPIN_MS = 150;
+const TURN = ['\n', '\n', 'User', ':', ' Next', ' question'];
 
 function spin(ms) {
   const until = performance.now() + ms;
@@ -37,12 +38,16 @@ function fakeKev(timeline) {
           }),
         generate: (ids, { maxTokens, onToken }) =>
           serial(async () => {
+            const turn = String.fromCharCode(...ids.slice(1)).includes('Turn.');
             let text = '';
             for (let i = 0; i < maxTokens; i++) {
               await session.run({});
-              timeline.push(performance.now());
-              spin(SPIN_MS);
-              text += ` word${i}`;
+              if (turn) text += TURN[i] ?? ' more';
+              else {
+                timeline.push(performance.now());
+                spin(SPIN_MS);
+                text += ` word${i}`;
+              }
               onToken(text, i + 1);
             }
             return { text, ids: [], inputTokens: ids.length, finish: 'length' };
@@ -137,5 +142,40 @@ describe('kev-ministral base weights stream from a synchronous decoder', () => {
     const { status, at } = await decision;
     assert.equal(status, 200);
     assert.ok(at > timeline.at(-1));
+  });
+
+  test('a reply that opens with the next turn stops there', async () => {
+    const response = await fetch(`${server.url}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'test/kev-ministral:base',
+        max_tokens: 20,
+        messages: [{ role: 'user', content: 'Turn.' }],
+      }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.choices[0].message.content, '');
+    assert.equal(body.choices[0].finish_reason, 'stop');
+    assert.equal(body.usage.completion_tokens, 4);
+  });
+
+  test('System One on the base id names the decision model', async () => {
+    const response = await fetch(`${server.url}/v1/systemone`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'test/kev-ministral:base',
+        state: 'x',
+        questions: { ok: { type: 'noul', instructions: 'ok?' } },
+      }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 400);
+    assert.match(
+      body.error.message,
+      /test\/kev-ministral:base does not answer System One requests; test\/kev-ministral does$/
+    );
   });
 });

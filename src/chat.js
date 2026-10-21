@@ -14,7 +14,8 @@ function servedBy(resolved, capability) {
   const found = Object.entries(resolved.info.modes ?? {}).find(
     ([, mode]) => mode.capability === capability
   );
-  return found ? `; ${resolved.id}:${found[0]} does` : '';
+  if (found) return `; ${resolved.id}:${found[0]} does`;
+  return resolved.mode && resolved.engine.capability === capability ? `; ${resolved.id} does` : '';
 }
 
 export function refuse(resolved, capability, what) {

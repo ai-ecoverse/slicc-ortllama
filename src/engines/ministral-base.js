@@ -107,14 +107,15 @@ export function baseChat({ kev, gate, kevjs, contextLength, now = () => performa
     if (signal?.aborted) throw signal.reason;
     emit({ type: 'start', promptTokens: inputTokens });
     const state = { pending: true, stopped: false, started: false, count: 0, first: null };
-    const stops = stopFilter([...TURNS, ...request.stop], (text) =>
-      emit({ type: 'content', text })
-    );
-    const push = (text) => {
+    const stops = stopFilter([...TURNS, ...request.stop], (text) => {
       const lead = state.started ? text : text.trimStart();
-      if (lead === '' || state.stopped) return;
+      if (lead === '') return;
       state.started = true;
-      state.stopped = stops.push(lead) || state.stopped;
+      emit({ type: 'content', text: lead });
+    });
+    const push = (text) => {
+      if (text === '' || state.stopped) return;
+      state.stopped = stops.push(text) || state.stopped;
     };
     let shown = '';
     const started = now();

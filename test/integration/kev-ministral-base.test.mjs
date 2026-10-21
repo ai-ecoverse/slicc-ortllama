@@ -161,5 +161,6 @@ describe('kev-ministral base weights on /v1/chat/completions', { skip }, () => {
     assert.match(chat.body.error.message, /:base does/);
     const decide = await json('/v1/systemone', { model: BASE, ...QUESTION });
     assert.equal(decide.status, 400);
+    assert.match(decide.body.error.message, /; ai-ecoverse\/kev-ministral\/kev-ministral-3b does$/);
   });
 });
