@@ -3,10 +3,12 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { toRecord } from '@ai-ecoverse/kev.js';
 import { resample, toMono16k } from '../src/audio/pcm.js';
+import { fixtureName } from '../src/cli.js';
 import { toRecord as decisionRecord } from '../src/engines/decisions.js';
 import { fixtureRequest } from '../src/engines/decoder/index.js';
 import { spectrum } from '../src/engines/kokoro.js';
 import { speechProbabilities } from '../src/engines/silero.js';
+import { baseRequest } from '../src/engines/systemone.js';
 import { wordErrorRate } from '../src/engines/whisper.js';
 import { imageFromUrl } from '../src/images.js';
 import { createRuntime, openCatalog } from '../src/index.js';
@@ -241,7 +243,33 @@ async function systemoneFixtures(instance, resolved, recordOf = toRecord, minOpt
   return out;
 }
 
+async function baseFixtures(instance) {
+  const image = `data:image/png;base64,${(await readFile(RED_CIRCLE)).toString('base64')}`;
+  const prompts = [
+    ...PROMPTS,
+    {
+      name: 'red-circle',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: image } },
+            { type: 'text', text: 'Describe this image.' },
+          ],
+        },
+      ],
+    },
+  ];
+  const out = [];
+  for (const p of prompts) {
+    const { ids, text } = await instance.complete(await baseRequest(p.messages), TOKENS);
+    out.push({ ...p, text, tokens: ids });
+  }
+  return out;
+}
+
 const BUILDERS = {
+  base: baseFixtures,
   whisper: whisperFixtures,
   silero: sileroFixtures,
   kokoro: kokoroFixtures,
@@ -253,8 +281,8 @@ const BUILDERS = {
 async function fixturesFor(id) {
   const { resolved, entry, instance } = await open(id);
   const started = performance.now();
-  const fixtures = await BUILDERS[resolved.engine.name](instance, resolved);
-  const path = join(ROOT, `${resolved.id}.json`);
+  const fixtures = await BUILDERS[resolved.mode ?? resolved.engine.name](instance, resolved);
+  const path = join(ROOT, fixtureName(resolved));
   await mkdir(dirname(path), { recursive: true });
   const about = {
     model: resolved.id,

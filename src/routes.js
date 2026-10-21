@@ -1,4 +1,4 @@
-import { chatRoute } from './chat.js';
+import { chatRoute, refuse } from './chat.js';
 import { badRequest } from './http/errors.js';
 import { requestImage } from './images.js';
 import { PRIORITY } from './runtime.js';
@@ -46,8 +46,7 @@ export function createRoutes({ catalog, runtime, version, maxTokens, aac }) {
         if (typeof body !== 'object' || body === null || Array.isArray(body))
           throw badRequest('request body must be a JSON object');
         const resolved = await catalog.resolve(body.model ?? 'decisions');
-        if (resolved.engine.capability !== 'systemone')
-          throw badRequest(`model ${resolved.id} does not answer System One requests`, 'model');
+        refuse(resolved, 'systemone', 'System One requests');
         const { model, image, ...text } = body;
         const request =
           image === undefined ? text : { ...text, image: await requestImage(image, resolved) };

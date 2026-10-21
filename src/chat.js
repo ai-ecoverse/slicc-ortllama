@@ -6,6 +6,25 @@ const ROLES = new Set(['system', 'developer', 'user', 'assistant', 'tool']);
 const EFFORTS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']);
 const TOOL_NAME = /^[A-Za-z0-9_.-]{1,64}$/;
 
+export const capabilityOf = (resolved) => resolved.capability ?? resolved.engine.capability;
+
+export const modelName = ({ id, mode }) => (mode ? `${id}:${mode}` : id);
+
+function servedBy(resolved, capability) {
+  const found = Object.entries(resolved.info.modes ?? {}).find(
+    ([, mode]) => mode.capability === capability
+  );
+  return found ? `; ${resolved.id}:${found[0]} does` : '';
+}
+
+export function refuse(resolved, capability, what) {
+  if (capabilityOf(resolved) !== capability)
+    throw badRequest(
+      `model ${modelName(resolved)} does not answer ${what}${servedBy(resolved, capability)}`,
+      'model'
+    );
+}
+
 const isObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 const DETAILS = new Set(['auto', 'low', 'high']);
@@ -296,8 +315,7 @@ export function chatRoute({
       const parsed = parseChatRequest(body);
       parsed.request.maxTokens ??= maxTokens;
       const resolved = await catalog.resolve(parsed.model);
-      if (resolved.engine.capability !== 'chat')
-        throw badRequest(`model ${resolved.id} does not answer chat completions`, 'model');
+      refuse(resolved, 'chat', 'chat completions');
       if (imageParts(parsed.request).length > 0 && !resolved.info.inputModalities.includes('image'))
         throw badRequest(
           `model ${resolved.id} takes no images${resolved.download ? `; for its vision encoder, run: ${resolved.download}` : ''}`,
