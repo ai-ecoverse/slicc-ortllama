@@ -12,6 +12,10 @@ const TEMPERATURE = 0.3;
 const SEED = 0x2a2a2a2a;
 const DECODE_BATCH = 16;
 const PIPELINE = ['config.json', 'tokenizer.json'];
+const DELTA = 'duration_delta';
+const DELTA_PER_LOG_SPEED = -2;
+const FASTEST = -0.6;
+const SLOWEST = 0.5;
 
 const dispose = (...tensors) => {
   for (const t of tensors) t?.dispose?.();
@@ -53,6 +57,10 @@ export function seededNormal(seed, temperature) {
     }
     return out;
   };
+}
+
+export function durationDelta(speed) {
+  return Math.min(SLOWEST, Math.max(FASTEST, DELTA_PER_LOG_SPEED * Math.log(speed)));
 }
 
 export function eosPolicy(framesAfterEos) {
@@ -173,12 +181,20 @@ function createSpeaker({ ort, files, sessions, config }) {
     return prompts.get(voice);
   }
 
+  const conditioned = (session) => session.inputNames?.includes(DELTA) ?? false;
+  const paced = conditioned(sessions.text_conditioner) && conditioned(sessions.flow_lm_flow);
+  const conditions = (session, delta) => (conditioned(session) ? { [DELTA]: delta } : {});
+
   async function frame(state, draw, f) {
     const out = await lm.run(state.step, state.past);
     dispose(state.step, ...state.past);
     state.past = out.present;
     const z = new ort.Tensor('float32', draw(meta.latent_dim, f), [1, meta.latent_dim]);
-    const flow = await sessions.flow_lm_flow.run({ hidden: out.hidden, noise: z });
+    const flow = await sessions.flow_lm_flow.run({
+      hidden: out.hidden,
+      noise: z,
+      ...conditions(sessions.flow_lm_flow, state.delta),
+    });
     dispose(out.hidden, z);
     state.step = flow.next_embeds;
     const latent = new Float32Array(await flow.latent.getData());
@@ -186,7 +202,7 @@ function createSpeaker({ ort, files, sessions, config }) {
     return { latent, eos: out.eos };
   }
 
-  async function generate(chunk, voice, options = {}) {
+  async function* frames(chunk, voice, options, record) {
     const { temperature, seed, noise, signal } = options;
     const batch = options.batch ?? DECODE_BATCH;
     const draw =
@@ -195,44 +211,58 @@ function createSpeaker({ ort, files, sessions, config }) {
       seededNormal(seed ?? SEED, temperature ?? TEMPERATURE);
     const ids = BigInt64Array.from(chunk.tokens, BigInt);
     const input = new ort.Tensor('int64', ids, [1, ids.length]);
-    const text = await sessions.text_conditioner.run({ input_ids: input });
+    const delta = new ort.Tensor('float32', Float32Array.of(options.delta ?? 0), [1]);
+    const text = await sessions.text_conditioner.run({
+      input_ids: input,
+      ...conditions(sessions.text_conditioner, delta),
+    });
     const first = await lm.run(text.inputs_embeds, await prompt(voice));
     dispose(input, text.inputs_embeds, first.hidden);
-    const state = { past: first.present, step: text.bos_embeds };
+    const state = { past: first.present, step: text.bos_embeds, delta };
     const decode = mimiDecoder(ort, sessions.mimi_decoder, meta);
     const stop = eosPolicy(chunk.framesAfterEos);
-    const frames = [];
     const latents = [];
-    const eos = [];
-    let pending = 0;
+    let group = options.grow ? 1 : batch;
     try {
       for (let f = 0; f < chunk.frameBudget; f++) {
         signal?.throwIfAborted();
         const out = await frame(state, draw, f);
         latents.push(out.latent);
-        eos.push(out.eos);
-        pending++;
+        record?.(out);
         const done = stop(out.eos > config.eos_threshold);
-        if (pending >= batch || done) {
-          frames.push(await decode(latents.slice(latents.length - pending)));
-          pending = 0;
+        if (latents.length >= group || done) {
+          yield await decode(latents.splice(0));
+          group = Math.min(batch, group * 2);
         }
         if (done) break;
       }
-      if (pending) frames.push(await decode(latents.slice(latents.length - pending)));
+      if (latents.length) yield await decode(latents.splice(0));
     } finally {
-      dispose(state.step, ...state.past);
+      dispose(state.step, delta, ...state.past);
       decode.close();
     }
-    return { audio: concat(frames), latents, eos };
   }
+
+  async function generate(chunk, voice, options = {}) {
+    const parts = [];
+    const latents = [];
+    const eos = [];
+    const record = (out) => {
+      latents.push(out.latent);
+      eos.push(out.eos);
+    };
+    for await (const audio of frames(chunk, voice, options, record)) parts.push(audio);
+    return { audio: concat(parts), latents, eos };
+  }
+
+  const stream = (chunk, voice, options = {}) => frames(chunk, voice, { grow: true, ...options });
 
   async function release() {
     for (const pending of prompts.values()) dispose(...(await pending.catch(() => [])));
     prompts.clear();
   }
 
-  return { generate, release };
+  return { generate, stream, release, paced };
 }
 
 async function availableVoices(files, meta) {
@@ -325,9 +355,19 @@ export const phonon = {
     const generate = (chunk, { voice, ...options } = {}) =>
       speaker.generate(chunk, voiceName(voice), options);
 
-    async function synthesize(chunk, { speed = 1, ...options } = {}) {
-      if (speed !== 1) throw badRequest('phonon speaks at one speed; use speed 1', 'speed');
-      return (await generate(chunk, options)).audio;
+    function pace(speed = 1) {
+      if (speed === 1) return 0;
+      if (!speaker.paced)
+        throw badRequest('this phonon export speaks at one speed; use speed 1', 'speed');
+      return durationDelta(speed);
+    }
+
+    async function synthesize(chunk, { speed, ...options } = {}) {
+      return (await generate(chunk, { ...options, delta: pace(speed) })).audio;
+    }
+
+    function stream(chunk, { speed, voice, ...options } = {}) {
+      return speaker.stream(chunk, voiceName(voice), { ...options, delta: pace(speed) });
     }
 
     return {
@@ -339,10 +379,11 @@ export const phonon = {
       tokens: async (text, options) => tokens(text, options),
       generate,
       synthesize,
+      stream,
       async *speak(text, { signal, ...options } = {}) {
         for (const chunk of tokens(text, options)) {
           signal?.throwIfAborted();
-          yield await synthesize(chunk, { ...options, signal });
+          yield* stream(chunk, { ...options, signal });
         }
       },
       async release() {
