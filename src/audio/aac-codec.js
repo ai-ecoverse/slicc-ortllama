@@ -206,6 +206,9 @@ function webEncoder(scope, config, from) {
       if (encoder.state !== 'closed') encoder.close();
       return take();
     },
+    close() {
+      if (encoder.state !== 'closed') encoder.close();
+    },
   };
 }
 
@@ -292,6 +295,7 @@ export function fdk([library]) {
         sampleRate,
         encode: async (input) => unwrap(await encoder.encode(input)),
         flush: async () => unwrap(await encoder.flush()),
+        close: () => encoder.free(),
       };
     },
   };
@@ -346,6 +350,9 @@ export function bunny([mediabunny, extension]) {
         async flush() {
           await output.finalize();
           return take();
+        },
+        close() {
+          if (output.state === 'started') output.cancel().catch(() => {});
         },
       };
     },

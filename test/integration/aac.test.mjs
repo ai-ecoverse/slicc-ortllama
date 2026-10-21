@@ -347,6 +347,30 @@ describe('AAC over HTTP', () => {
     synthesize: async () => Float32Array.from({ length: 4800 }, (_, i) => 0.4 * Math.sin(i / 7)),
   };
 
+  const encoders = [];
+  const peers = createAacCodec({ scope: {}, load: only(...ALL_PEERS) });
+  const tracked = {
+    require: (role) => peers.require(role),
+    decoder: (config) => peers.decoder(config),
+    async encoder(config) {
+      const inner = await peers.encoder(config);
+      const seen = { flushed: false, closed: false };
+      encoders.push(seen);
+      return {
+        sampleRate: inner.sampleRate,
+        encode: (input) => inner.encode(input),
+        flush() {
+          seen.flushed = true;
+          return inner.flush();
+        },
+        close() {
+          seen.closed = true;
+          inner.close();
+        },
+      };
+    },
+  };
+
   before(async () => {
     const resolved = {
       transcribe: engine('transcription', listener),
@@ -354,7 +378,8 @@ describe('AAC over HTTP', () => {
     };
     for (const [name, aac] of [
       ['none', none()],
-      ['peers', createAacCodec({ scope: {}, load: only(...ALL_PEERS) })],
+      ['peers', peers],
+      ['tracked', tracked],
     ]) {
       const catalog = { aliases: {}, list: async () => [], resolve: async (m) => resolved[m] };
       const runtime = createRuntime({
@@ -415,6 +440,27 @@ describe('AAC over HTTP', () => {
     const { config, frames } = adtsFrames(bytes);
     assert.deepEqual(config, { object: 2, index: 6, channels: 1, rate: 24000 });
     assert.ok(frames.length >= 9, `${frames.length} frames`);
+  });
+
+  test('a client that hangs up mid-stream closes the AAC encoder', async () => {
+    const controller = new AbortController();
+    const response = await fetch(`${servers.tracked.url}/v1/audio/speech`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'speech',
+        input: 'One more sentence. '.repeat(200),
+        response_format: 'aac',
+      }),
+      signal: controller.signal,
+    });
+    assert.equal(response.status, 200);
+    await response.body.getReader().read();
+    controller.abort();
+    const until = Date.now() + 5000;
+    while (!encoders[0]?.closed && Date.now() < until)
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(encoders, [{ flushed: false, closed: true }]);
   });
 });
 

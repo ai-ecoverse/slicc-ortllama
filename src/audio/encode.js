@@ -35,6 +35,7 @@ export async function aacOutput(aac = aacCodec()) {
     return {
       push: async (samples) => wrap(await encoder.encode([samples])),
       end: async () => wrap(await encoder.flush()),
+      close: () => encoder.close?.(),
     };
   };
 }
