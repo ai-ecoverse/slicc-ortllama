@@ -9,6 +9,7 @@ const INVERSE_DB = Float32Array.from(
   (_, i) => 1.0649863e-7 * Math.exp(i * DB_STEP)
 );
 const MAX_VALUES = 1 << 22;
+const MAX_ENTRIES = 1 << 20;
 
 function corrupt() {
   return new AudioFormatError('the Vorbis stream is corrupt');
@@ -134,13 +135,14 @@ function readLengths(bits, entries) {
   return lengths;
 }
 
-function vectors(bits, type, entries, dimensions) {
+function vectors(bits, type, entries, dimensions, budget) {
   const min = unpackFloat(bits.read(32));
   const delta = unpackFloat(bits.read(32));
   const width = bits.read(4) + 1;
   const sequence = bits.read(1);
   const count = type === 1 ? lookup1(entries, dimensions) : entries * dimensions;
-  if (count > MAX_VALUES || entries * dimensions > MAX_VALUES) throw corrupt();
+  budget.values -= count + entries * dimensions;
+  if (budget.values < 0) throw corrupt();
   const values = Float64Array.from({ length: count }, () => bits.read(width) * delta + min);
   const out = new Float32Array(entries * dimensions);
   for (let e = 0; e < entries; e++) {
@@ -157,12 +159,14 @@ function vectors(bits, type, entries, dimensions) {
   return out;
 }
 
-function codebook(bits) {
+function codebook(bits, budget) {
   const { dimensions, entries } = header(bits);
+  budget.entries -= entries;
+  if (budget.entries < 0) throw corrupt();
   const lengths = readLengths(bits, entries);
   const type = bits.read(4);
   if (type > 2) throw corrupt();
-  const table = type ? vectors(bits, type, entries, dimensions) : null;
+  const table = type ? vectors(bits, type, entries, dimensions, budget) : null;
   return { dimensions, entries, lengths, vectors: table, ...build(lengths) };
 }
 
@@ -274,7 +278,8 @@ export function vorbisHeaders(id, setup) {
   if (!channels || !rate || blocks[0] < 64 || blocks[1] > 8192 || blocks[0] > blocks[1])
     throw corrupt();
   const bits = new Bits(setup.subarray(7));
-  const books = Array.from({ length: bits.read(8) + 1 }, () => codebook(bits));
+  const budget = { entries: MAX_ENTRIES, values: MAX_VALUES };
+  const books = Array.from({ length: bits.read(8) + 1 }, () => codebook(bits, budget));
   const times = bits.read(6) + 1;
   for (let i = 0; i < times; i++) if (bits.read(16)) throw corrupt();
   const floors = Array.from({ length: bits.read(6) + 1 }, () => {

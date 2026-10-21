@@ -5,6 +5,8 @@ import { AudioFormatError } from './pcm.js';
 export const RATES = [
   96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
 ];
+const BAND_RATES = [92017, 75132, 55426, 46009, 37566, 27713, 23004, 18783, 13856, 11502, 9391, 0];
+const TRAILERS = ['TAG', 'ID3', 'APETAGEX'];
 const LC = new Set([1, 2, 4]);
 const EIGHT_SHORT = 2;
 const LONG_START = 1;
@@ -124,7 +126,7 @@ export function audioSpecificConfig(bytes) {
   };
   const rate = () => {
     const index = bits.read(4);
-    return index === 15 ? { index: -1, rate: bits.read(24) } : { index, rate: RATES[index] };
+    return index === 15 ? bits.read(24) : (RATES[index] ?? 0);
   };
   let type = object();
   const core = rate();
@@ -135,8 +137,12 @@ export function audioSpecificConfig(bytes) {
   }
   if (!LC.has(type)) throw unsupported(`AAC object type ${type}`);
   if (bits.read(1)) throw unsupported('AAC with 960-sample frames');
-  if (core.index < 0 || core.index > 11) throw unsupported(`AAC at ${core.rate} Hz`);
-  return { object: type, index: core.index, rate: core.rate, channels };
+  if (!core) throw corrupt();
+  return { object: type, index: bandIndex(core), rate: core, channels };
+}
+
+export function bandIndex(rate) {
+  return BAND_RATES.findIndex((least) => rate >= least);
 }
 
 const sync = (bytes, at) => bytes[at] === 0xff && (bytes[at + 1] & 0xf6) === 0xf0;
@@ -144,21 +150,25 @@ const sync = (bytes, at) => bytes[at] === 0xff && (bytes[at + 1] & 0xf6) === 0xf
 const frameLength = (b, at) => ((b[at + 3] & 3) << 11) | (b[at + 4] << 3) | (b[at + 5] >> 5);
 
 export function isAdts(bytes) {
-  if (bytes.length < 7 || !sync(bytes, 0) || ((bytes[2] >> 2) & 15) > 11) return false;
+  if (bytes.length < 7 || !sync(bytes, 0) || ((bytes[2] >> 2) & 15) > 12) return false;
   const length = frameLength(bytes, 0);
   return length >= 7 && (length === bytes.length || sync(bytes, length));
 }
+
+const trailer = (bytes) =>
+  TRAILERS.some((tag) => String.fromCharCode(...bytes.subarray(0, tag.length)) === tag);
 
 export function adtsFrames(bytes) {
   const frames = [];
   const blocks = [];
   let config = null;
-  for (let at = 0; at + 7 <= bytes.length && sync(bytes, at); ) {
+  let at = 0;
+  while (at + 7 <= bytes.length && sync(bytes, at)) {
     const header = bytes[at + 1] & 1 ? 7 : 9;
     const length = frameLength(bytes, at);
     const index = (bytes[at + 2] >> 2) & 15;
     const count = (bytes[at + 6] & 3) + 1;
-    if (length < header || at + length > bytes.length) break;
+    if (length < header || at + length > bytes.length || index > 12) throw corrupt();
     if (count > 1 && header === 9) throw unsupported('ADTS with CRC-protected blocks');
     config ??= { object: (bytes[at + 2] >> 6) + 1, index, rate: RATES[index], channels: 0 };
     if (!LC.has(config.object)) throw unsupported(`AAC object type ${config.object}`);
@@ -167,8 +177,8 @@ export function adtsFrames(bytes) {
     blocks.push(count);
     at += length;
   }
-  if (!config || config.index > 11) throw corrupt();
-  return { config, frames, blocks };
+  if (!config || (at < bytes.length && !trailer(bytes.subarray(at)))) throw corrupt();
+  return { config: { ...config, index: bandIndex(config.rate) }, frames, blocks };
 }
 
 function icsInfo(bits, ics, index) {

@@ -87,6 +87,7 @@ function table(view, box, width) {
 function sizes(view, box) {
   const fixed = view.getUint32(box.body + 4);
   const count = view.getUint32(box.body + 8);
+  if (fixed && fixed * count > view.byteLength) throw corrupt();
   if (fixed) return new Array(count).fill(fixed);
   if (box.body + 12 + count * 4 > box.end) throw corrupt();
   return Array.from({ length: count }, (_, i) => view.getUint32(box.body + 12 + i * 4));
@@ -194,7 +195,7 @@ function trun(view, box, run, out) {
   at += flags & 4 ? 4 : 0;
   const fields = [0x100, 0x200, 0x400, 0x800].filter((f) => flags & f).length;
   const sized = flags & 0x200 ? (flags & 0x100 ? 4 : 0) : -1;
-  if (at + count * fields * 4 > box.end) throw corrupt();
+  if (at + count * fields * 4 > box.end || count > view.byteLength) throw corrupt();
   for (let i = 0; i < count; i++, at += fields * 4) {
     const size = sized < 0 ? run.size : view.getUint32(at + sized);
     out.push({ at: run.cursor, size });

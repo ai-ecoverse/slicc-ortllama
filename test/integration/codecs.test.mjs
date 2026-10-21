@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
+import { audioSpecificConfig } from '../../src/audio/aac.js';
 import { decodeFile } from '../../src/audio/decode.js';
 import { createFlacEncoder, decodeFlac } from '../../src/audio/flac.js';
 import { concat, decodeWav, encodePcm16 } from '../../src/audio/pcm.js';
@@ -170,6 +171,15 @@ describe('AAC in MP4 and ADTS, and Ogg Vorbis', () => {
     }
   });
 
+  test('read explicit AAC sample rates', () => {
+    assert.deepEqual(audioSpecificConfig(Uint8Array.of(0x17, 0x80, 0x56, 0x22, 0x10)), {
+      object: 2,
+      index: 4,
+      rate: 44100,
+      channels: 2,
+    });
+  });
+
   test('answer clear errors for other codecs and broken files', async () => {
     const m4a = await fixture('m4a');
     await assert.rejects(refused(patched(m4a, 'mp4a', 'alac')), /MP4 codec alac is not supported/);
@@ -178,6 +188,8 @@ describe('AAC in MP4 and ADTS, and Ogg Vorbis', () => {
       refused(new Uint8Array([0xff, 0xf1, 0x50]), { type: 'audio/aac' }),
       /the AAC stream is corrupt/
     );
+    const adts = await fixture('aac');
+    await assert.rejects(refused(adts.subarray(0, adts.length - 100)), /the AAC stream is corrupt/);
     const ogg = await fixture('ogg');
     await assert.rejects(refused(patched(ogg, 'BCV', 'BCX')), /the Vorbis stream is corrupt/);
   });
