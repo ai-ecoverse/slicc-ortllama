@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
+import { audioSpecificConfig } from '../../src/audio/aac.js';
 import { decodeFile } from '../../src/audio/decode.js';
 import { createFlacEncoder, decodeFlac } from '../../src/audio/flac.js';
 import { concat, decodeWav, encodePcm16 } from '../../src/audio/pcm.js';
@@ -38,6 +39,39 @@ function flacOf(samples, rate) {
 const pcm16 = (samples) => new Int16Array(encodePcm16(samples).buffer);
 
 const flacTool = spawnSync('flac', ['--version']).status === 0;
+
+function similarity(a, b) {
+  let dot = 0;
+  let x = 0;
+  let y = 0;
+  for (let i = 0; i < b.length; i++) {
+    dot += a[i] * b[i];
+    x += a[i] ** 2;
+    y += b[i] ** 2;
+  }
+  return dot / Math.sqrt(x * y);
+}
+
+function pitch(samples, rate, hz) {
+  let re = 0;
+  let im = 0;
+  samples.forEach((x, i) => {
+    re += x * Math.cos((2 * Math.PI * hz * i) / rate);
+    im += x * Math.sin((2 * Math.PI * hz * i) / rate);
+  });
+  return (
+    Math.hypot(re, im) / Math.sqrt((samples.length / 2) * samples.reduce((n, x) => n + x * x, 0))
+  );
+}
+
+function patched(bytes, from, to) {
+  const out = bytes.slice();
+  const at = Buffer.from(out).indexOf(from);
+  out.set(Buffer.from(to), at);
+  return out;
+}
+
+const refused = (bytes, options = {}) => decodeFile(bytes, { rate: 16000, ...options });
 
 describe('mp3 decoding is gapless', () => {
   test('trims the encoder delay and padding the LAME header names', async () => {
@@ -104,5 +138,59 @@ describe('FLAC encoding uses LPC', () => {
     } finally {
       await rm(dir, { recursive: true });
     }
+  });
+});
+
+describe('AAC in MP4 and ADTS, and Ogg Vorbis', () => {
+  test('decode the fox to the WAV, aligned by the MP4 gapless data and the Ogg granule', async () => {
+    const { samples, rate } = decodeWav(await foxWav());
+    for (const [ext, name] of [
+      ['m4a', 'fox'],
+      ['m4a', 'fox-he'],
+      ['ogg', 'fox'],
+    ]) {
+      const decoded = await decodeFile(await fixture(ext, name), { rate });
+      assert.equal(decoded.length, samples.length, name);
+      assert.ok(similarity(decoded, samples) > 0.99, `${name}.${ext}`);
+    }
+    const adts = await decodeFile(await fixture('aac'), { rate, type: 'audio/aac' });
+    assert.equal(adts.length, 43 * 1024);
+    assert.ok(similarity(adts.subarray(1024), samples) > 0.99);
+  });
+
+  test('keep the sample rate and length of 44.1 kHz stereo', async () => {
+    for (const [ext, name, length] of [
+      ['m4a', 'tone', 22050],
+      ['ogg', 'tone', 22050],
+      ['mp4', 'tone-frag', 23 * 1024],
+    ]) {
+      const decoded = await decodeFile(await fixture(ext, name), { rate: 44100 });
+      assert.equal(decoded.length, length, name);
+      assert.ok(pitch(decoded.subarray(2048, 20480), 44100, 440) > 0.99, `${name}.${ext}`);
+      assert.ok(pitch(decoded.subarray(2048, 20480), 44100, 400) < 0.1, `${name}.${ext}`);
+    }
+  });
+
+  test('read explicit AAC sample rates', () => {
+    assert.deepEqual(audioSpecificConfig(Uint8Array.of(0x17, 0x80, 0x56, 0x22, 0x10)), {
+      object: 2,
+      index: 4,
+      rate: 44100,
+      channels: 2,
+    });
+  });
+
+  test('answer clear errors for other codecs and broken files', async () => {
+    const m4a = await fixture('m4a');
+    await assert.rejects(refused(patched(m4a, 'mp4a', 'alac')), /MP4 codec alac is not supported/);
+    await assert.rejects(refused(m4a.subarray(0, 4000)), /the MP4 file is corrupt/);
+    await assert.rejects(
+      refused(new Uint8Array([0xff, 0xf1, 0x50]), { type: 'audio/aac' }),
+      /the AAC stream is corrupt/
+    );
+    const adts = await fixture('aac');
+    await assert.rejects(refused(adts.subarray(0, adts.length - 100)), /the AAC stream is corrupt/);
+    const ogg = await fixture('ogg');
+    await assert.rejects(refused(patched(ogg, 'BCV', 'BCX')), /the Vorbis stream is corrupt/);
   });
 });

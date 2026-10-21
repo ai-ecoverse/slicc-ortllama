@@ -84,6 +84,28 @@ describe('Whisper transcription through pi-audio', { skip }, () => {
     assert.match((await webm.json()).text.toLowerCase(), FOX);
   });
 
+  test('transcribes M4A, HE-AAC, ADTS AAC and Ogg Vorbis to the same text as the WAV', async () => {
+    const heard = async (data, mimeType) =>
+      (await transcribe(model, { data, mimeType }, { apiKey: 'x' })).text;
+    const text = await heard(wav, 'audio/wav');
+    for (const [ext, name, mimeType] of [
+      ['m4a', 'fox', 'audio/mp4'],
+      ['m4a', 'fox-he', 'audio/m4a'],
+      ['ogg', 'fox', 'audio/ogg'],
+    ])
+      assert.equal(await heard(await fixture(ext, name), mimeType), text, `${name}.${ext}`);
+    assert.match((await heard(await fixture('aac'), 'audio/aac')).toLowerCase(), FOX);
+    const form = new FormData();
+    form.set('file', new Blob([await fixture('m4a')]), 'memo.m4a');
+    form.set('model', WHISPER);
+    form.set('response_format', 'verbose_json');
+    const memo = await fetch(`${server.url}/v1/audio/transcriptions`, {
+      method: 'POST',
+      body: form,
+    });
+    assert.equal((await memo.json()).duration, 2.671);
+  });
+
   test('decodes a clip longer than 30 seconds in windows and detects languages', async () => {
     const shipped = new URL('../../fixtures/', import.meta.url);
     const { fixtures } = JSON.parse(
@@ -126,11 +148,14 @@ describe('Whisper transcription through pi-audio', { skip }, () => {
     assert.ok(Array.isArray(verbose.segments[0].tokens));
     const text = await (await post({ model: WHISPER, response_format: 'text' })).text();
     assert.match(text.toLowerCase(), FOX);
+    const amr = await post({ model: WHISPER }, 'audio/amr', new TextEncoder().encode('#!AMR\n'));
+    assert.equal(amr.status, 400);
+    const { error } = await amr.json();
+    assert.equal(error.param, 'file');
+    assert.match(error.message, /audio\/amr is not supported; send wav, mp3, flac, m4a/);
     const aac = await post({ model: WHISPER }, 'audio/aac', new Uint8Array([0xff, 0xf1, 0x50]));
     assert.equal(aac.status, 400);
-    const { error } = await aac.json();
-    assert.equal(error.param, 'file');
-    assert.match(error.message, /audio\/aac is not supported; send wav, mp3, flac/);
+    assert.match((await aac.json()).error.message, /the AAC stream is corrupt/);
     const klingon = await post({ model: WHISPER, language: 'tlh' });
     assert.equal(klingon.status, 400);
     assert.equal((await klingon.json()).error.param, 'language');
