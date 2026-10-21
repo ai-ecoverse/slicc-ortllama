@@ -45,7 +45,7 @@ async function externalData(files, rel) {
   return out;
 }
 
-async function createSession(backend, files, rel) {
+export async function createSession(backend, files, rel) {
   const data = [];
   for (const name of await externalData(files, rel))
     data.push({ path: posix.basename(name), data: await files.read(name) });

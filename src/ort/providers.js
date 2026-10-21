@@ -6,11 +6,11 @@ export function providersFrom(env, fallback = null) {
   return list.length > 0 ? list : fallback;
 }
 
-export function providerOrder(backend, { providers, engine, info }) {
+export function providerOrder(backend, { providers, engine, info, variant }) {
   if (backend.overrideProviders) return { order: backend.overrideProviders, source: 'env' };
   if (providers) return { order: providers, source: 'hint' };
   const table =
-    typeof engine?.providers === 'function' ? engine.providers(info) : engine?.providers;
+    typeof engine?.providers === 'function' ? engine.providers(info, variant) : engine?.providers;
   const preferred = table?.[backend.track];
   if (preferred) return { order: preferred, source: 'engine' };
   return { order: backend.executionProviders, source: 'default' };

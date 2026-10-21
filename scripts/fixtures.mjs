@@ -179,6 +179,21 @@ async function whisperFixtures(instance) {
   return out;
 }
 
+async function parakeetFixtures(instance) {
+  const out = [];
+  for (const clip of CLIPS.filter((c) => c.detect === 'english')) {
+    const got = await instance.transcribe(await clipAudio(clip));
+    out.push({
+      name: clip.name,
+      file: join(AUDIO, clip.file),
+      text: clip.text,
+      wer: +wordErrorRate(clip.text, got.text).toFixed(3),
+      heard: got.text,
+    });
+  }
+  return out;
+}
+
 async function sileroFixtures(instance) {
   const out = [];
   for (const name of VAD_CLIPS) {
@@ -271,6 +286,7 @@ async function baseFixtures(instance) {
 const BUILDERS = {
   base: baseFixtures,
   whisper: whisperFixtures,
+  parakeet: parakeetFixtures,
   silero: sileroFixtures,
   kokoro: kokoroFixtures,
   decoder: decoderFixtures,
