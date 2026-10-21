@@ -68,7 +68,7 @@ curl -s localhost:11435/v1/audio/transcriptions -F file=@clip.wav -F response_fo
 | `POST /v1/systemone` | TypeSafe's [System One](#system-one) protocol, on kev.js and jev-omni.js |
 | `POST /v1/audio/transcriptions` | OpenAI's [transcription](#transcription) API, on Whisper |
 | `GET /v1/realtime?intent=transcription` | OpenAI's [realtime transcription](#realtime-transcription) over WebSocket |
-| `POST /v1/audio/speech` | OpenAI's [text to speech](#speech), on Kokoro-82M |
+| `POST /v1/audio/speech` | OpenAI's [text to speech](#speech), on Kokoro-82M and [Phonon 31m English](#phonon) |
 | `GET /ortllama/ps` | loaded models, their [execution providers](#execution-providers) and size, and the process's memory |
 
 Errors use OpenAI's envelope, `{ "error": { "message", "type", "param", "code" } }`.
@@ -180,7 +180,7 @@ Audio is `audio/pcm` at 8–48 kHz (24 kHz by default). Turns are detected by `s
 
 ### Speech
 
-`POST /v1/audio/speech` takes `{ model, input, voice, response_format, speed, instructions }`, on [Kokoro-82M](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX).
+`POST /v1/audio/speech` takes `{ model, input, voice, response_format, speed, instructions }`, on [Kokoro-82M](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) and on [Phonon 31m English](#phonon).
 
 - `model` defaults to the `speech` role, `voice` to `af_heart`, and `instructions` is accepted and ignored.
 - `response_format` is `wav` (the default), `pcm` (24 kHz mono 16-bit little-endian), `mp3` (`audio/mpeg`, 64 kbit/s), `opus` (Ogg Opus, `audio/opus`, 32 kbit/s), `flac` (`audio/flac`) or `aac` (ADTS, `audio/aac`, AAC-LC, mono, 64 kbit/s, from the codec [AAC](#aac) describes, at 96 kbit/s on Windows' WebCodecs encoder; `400` without one). ADTS has no gapless data, so a decoder starts with the encoder's delay, 85 ms with `@audio/encode-aac`. mp3 is encoded in JavaScript as MPEG-1, 2 or 2.5 Layer III, mono, at the nearest mp3 sample rate, with constant bitrate and long blocks only, no psychoacoustic model and no gapless header, so a decoder adds about 44 ms of silence at the start at 24 kHz.
@@ -210,6 +210,33 @@ Kokoro needs a phonemizer, and ortllama ships none. npm phonemizers are imported
 | [`phonemizer`](https://github.com/xenova/phonemizer.js) | `npm install phonemizer` (2.6 MB) | English | labelled Apache-2.0, but bundles espeak-ng (GPL-3.0-or-later) | the same phonemes as `espeak-ng` |
 
 Phonemizers are tried in the table's order, and the first that knows a voice's language speaks it, so English stays with misaki and `phonemize` even when `espeak-ng` is installed. `ORTLLAMA_PHONEMIZERS` (such as `phonemize,espeak-ng`) changes the order or leaves some out. A phonemizer that fails while speaking is skipped for a minute, and the next one speaks. Other heteronyms, such as past-tense `read` or `bass`, take the lexicon's usual reading until there is a part-of-speech tagger.
+
+#### Phonon
+
+[Phonon 31m English](https://huggingface.co/gradium/phonon-31m-en) (Gradium, Apache-2.0, built on Kyutai's Pocket TTS and the Mimi codec) speaks through the `phonon` engine without a phonemizer. A flow-matching transformer turns the tokens into one Mimi latent every 80 ms, and the Mimi decoder turns those into 24 kHz audio. The engine reads an ONNX export laid out as:
+
+- `config.json`, the checkpoint's own, with an `onnx` section that lists the voices and the decoder's state,
+- `tokenizer.json`,
+- `onnx/text_conditioner.onnx`, `onnx/flow_lm_main.onnx` (KV cache in and out), `onnx/flow_lm_flow.onnx` and `onnx/mimi_decoder.onnx` (streaming state in and out), with `_quantized`, `_q4` and `_fp16` variants,
+- `voices/<name>.bin`, voice prompts already projected for the flow LM.
+
+No such export is published yet. Issue #102's feasibility run made one from the safetensors weights and put it into a local cache as `ai-ecoverse/phonon-31m-en-ONNX`; the [models](https://github.com/ai-ecoverse/models) repo will own the recipe.
+
+- **Text.** Gradium's runtime, `ptts --lang en`, normalizes English before it tokenizes it. ortllama does the same in JavaScript (`src/phonon/`) and gets the same token IDs on 361 test inputs: numbers, currency, dates, emails, URLs, abbreviations, symbols, chunking and fitting. Numbers stay as digits unless they have scale words, as in ptts: `$45.99` reads "45 dollars and 99 cents", `1,234` reads "1 thousand 234", and `https://docs.example.org` is spelled out piece by piece.
+- **Voices.** The 37 English voices of [gradium/phonon-voices](https://huggingface.co/gradium/phonon-voices), named in lowercase with dashes: `easton` (the default), `freya`, `zoey`, `elodie-rose`, `captain-silas-blackwater` and so on. Any capitalization works.
+- **Sampling.** Temperature 0.3, as in ptts. The noise comes from a seeded generator, so a request always sounds the same. It is not ptts's ChaCha12 stream, though, so the same seed does not give ptts's audio. Given the same noise, the export's latents and audio match ptts's.
+- **Chunks.** Each sentence starts again from the voice prompt, as each of ptts's chunks does. ptts groups sentences into chunks of up to 50 tokens, while ortllama sends one sentence at a time, as it does for Kokoro. `speed` other than 1 answers `400`: Phonon has no speed control.
+- **Variants.** `fp32` is the default. `q8` is 8-bit `MatMulNBits` on the flow LM only, as ptts quantizes it, and keeps the Mimi decoder in fp32. `fp16` is the whole graph in half precision. `q4` sounds noticeably worse and is there for comparison.
+
+Speed for four sentences (20 s of audio) on an M4 Max, as real-time factor and time until the first sentence is ready. Host numbers use 4 threads. Kernel numbers are `ortllama check`'s two sentences (4.7 s), on single-threaded WASM; Chrome's page process peaks at 1 GiB. For comparison, ptts itself (f32, 4 threads, streaming each frame) has a real-time factor of 0.023 and its first audio after 16 ms, and Kokoro fp32 on the host CPU 0.17 and 785 ms:
+
+| Variant | Host CPU | Host WebGPU | Kernel WASM | Kernel WebGPU |
+| --- | --- | --- | --- | --- |
+| `fp32` | 0.043, 160 ms | 0.18, 690 ms | 0.25 | 0.49 |
+| `q8` | 0.037, 141 ms | 0.14, 574 ms | 0.56 | 0.20 |
+| `fp16` | 0.061, 228 ms | 0.17, 698 ms | 0.28 | 0.47 |
+
+Phonon loads on the CPU on the host and on WASM in the kernel. Each 80 ms frame takes three small graph runs, so per-run overhead decides the speed, and WebGPU pays the most of it. Set `ORTLLAMA_EP` to use WebGPU anyway. Whisper large-v3-turbo hears 20 test sentences with a word error rate of 7.4 % from Phonon `fp32`, 6.5 % from `q8` and 7.4 % from ptts itself. It hears 5.3 % from Kokoro's `af_heart`. Every difference in Phonon's transcripts is the way a number or symbol is written, such as "9" for "nine", and none is a misread word.
 
 ### pi-audio
 
@@ -308,9 +335,10 @@ A model whose library is missing is still listed, and requests for it answer `50
 | systemone, kev-ministral `:base` | 3 prompts and an image, with the reference's 24 greedy tokens each (`kev-ministral-3b.base.json`) | fed the reference's tokens wherever they differ, at most 10 % of the tokens change |
 | whisper | 4 clips: `fox.wav`, a 32-second English story, French and Spanish (Kokoro voices, 8 kHz 8-bit) | the language is detected and the word error rate stays within 0.1 of the reference's |
 | kokoro | 3 sentences as token IDs, so the phonemizer does not matter, with a 40-band log-mel summary | the mel spectrogram stays within 2 dB and the length within 5 %; phonemes are compared and reported |
+| phonon | 3 sentences as text and token IDs, synthesized without sampling noise, with a 40-band log-mel summary | the token IDs match, and the mel spectrogram stays within 2 dB and the length within 5 % |
 | silero | speech probabilities for every 32 ms frame of two clips | mean change ≤ 0.01, at most 0.1, and no clear speech/silence flip |
 
-The tolerances leave room over what WebGPU differs from CPU, measured on host Node and in slicc-kernel (both alike): decoder mean 0.026–0.063 nats (max 0.48, flips only below a 0.55 margin; Ministral 3 3B to 14B), System One mean 0.006 (max 0.027 for Kev, 0.051 for kev-ministral), kev-ministral's base weights 2 of 96 tokens on host WebGPU, Kokoro 0.15–0.24 dB, Whisper and Silero none. Kokoro's `q8` variant lands at 2–5 dB and its `fp16` on WebGPU, which sounds garbled, at 25 dB. Fixtures hold the default variant; other variants can fall outside them, and `check` says so. `node scripts/fixtures.mjs <model>…` writes them on the host CPU (`node scripts/fixtures.mjs audio` makes the clips with Kokoro).
+The tolerances leave room over what WebGPU differs from CPU, measured on host Node and in slicc-kernel (both alike): decoder mean 0.026–0.063 nats (max 0.48, flips only below a 0.55 margin; Ministral 3 3B to 14B), System One mean 0.006 (max 0.027 for Kev, 0.051 for kev-ministral), kev-ministral's base weights 2 of 96 tokens on host WebGPU, Kokoro 0.15–0.24 dB, Phonon 0.00 dB (host WebGPU, kernel WASM and WebGPU), Whisper and Silero none. Kokoro's `q8` variant lands at 2–5 dB and its `fp16` on WebGPU, which sounds garbled, at 25 dB. Phonon's `q8` lands at 1.2–1.8 dB, and its `fp16` on kernel WebGPU at 8–9 dB. Fixtures hold the default variant; other variants can fall outside them, and `check` says so. `node scripts/fixtures.mjs <model>…` writes them on the host CPU (`node scripts/fixtures.mjs audio` makes the clips with Kokoro).
 
 ## Execution providers
 
@@ -373,6 +401,7 @@ Each integration test runs when its models are in the Hugging Face cache; `ORTLL
 | Reasoning | `ai-ecoverse/Ministral-3-3B-Reasoning-2512-ONNX:q4f16` |
 | Images | `mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16` with its vision encoder, `ai-ecoverse/kev.js/kev-0.8b-vision` |
 | Kokoro | `onnx-community/Kokoro-82M-v1.0-ONNX` |
+| Phonon | `ai-ecoverse/phonon-31m-en-ONNX` |
 
 Releases are published to npm from `main` by [semantic-release](https://semantic-release.gitbook.io), so commit messages follow [Conventional Commits](https://www.conventionalcommits.org).
 
@@ -400,6 +429,7 @@ Releases are published to npm from `main` by [semantic-release](https://semantic
 - [huggingface.js](https://github.com/huggingface/huggingface.js) and [tokenizers.js](https://github.com/huggingface/tokenizers.js): chat templates and tokenizers.
 - [Kev](https://github.com/jaredpalmer/kev): the decision models kev.js runs.
 - [Ministral 3](https://huggingface.co/collections/mistralai/ministral-3), [Whisper](https://github.com/openai/whisper), [Silero VAD](https://github.com/snakers4/silero-vad) and [Kokoro](https://github.com/hexgrad/kokoro): the default models.
+- [Phonon](https://github.com/gradium-ai/xn-ptts) (Gradium, built on Kyutai's [Pocket TTS](https://github.com/kyutai-labs/pocket-tts)): the `phonon` speech engine's model, and `ptts`, its reference runtime.
 - [jSquash](https://github.com/jamsinclair/jSquash): libwebp in WebAssembly for WebP images.
 
 ## License
