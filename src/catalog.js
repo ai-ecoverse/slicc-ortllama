@@ -88,6 +88,17 @@ function hintedVariant(info, hint) {
   return info.variants.includes(hint?.variant) ? hint.variant : info.defaultVariant;
 }
 
+function modeEntries(entry, modes = {}) {
+  return Object.entries(modes).map(([name, mode]) => ({
+    ...entry,
+    id: `${entry.id}:${name}`,
+    capability: mode.capability,
+    variants: [name],
+    defaultVariant: name,
+    ...mode.info,
+  }));
+}
+
 async function listEntry({ id, files, found, revision }, hint) {
   const defaultVariant = hintedVariant(found.info, hint);
   const { info, details } = await specialized(
@@ -97,7 +108,7 @@ async function listEntry({ id, files, found, revision }, hint) {
     hint,
     defaultVariant
   );
-  return {
+  const entry = {
     id,
     engine: found.engine.name,
     capability: found.engine.capability,
@@ -109,6 +120,7 @@ async function listEntry({ id, files, found, revision }, hint) {
     contextLength: info.contextLength,
     ...(details ? { details } : {}),
   };
+  return [entry, ...modeEntries(entry, info.modes)];
 }
 
 const detectedIn = (files, engines) => (dir) => detectEngine(files.sub(dir), engines);
@@ -187,9 +199,9 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
 
   async function survey() {
     const dirs = [...(await hubDirs(cache, engines)), ...(await localDirs(modelPath, engines))];
-    const models = await Promise.all(
-      dirs.filter((m) => m.found).map((m) => listEntry(m, hints[m.id]))
-    );
+    const models = (
+      await Promise.all(dirs.filter((m) => m.found).map((m) => listEntry(m, hints[m.id])))
+    ).flat();
     const unrecognized = [];
     for (const m of dirs) {
       if (!m.root || m.found) continue;
@@ -210,15 +222,19 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
     requestedRevision = null,
   }) {
     const { engine } = found;
-    const chosen = variant ?? hintedVariant(found.info, hints[id]);
-    if (!found.info.variants.includes(chosen)) {
+    const asked = variant ?? hintedVariant(found.info, hints[id]);
+    const mode = found.info.modes?.[asked];
+    if (!found.info.variants.includes(asked) && !mode) {
       throw notFound(
-        `model ${id} has no variant ${chosen}; it has ${found.info.variants.join(', ')}`,
+        `model ${id} has no variant ${asked}; it has ${[...found.info.variants, ...Object.keys(found.info.modes ?? {})].join(', ')}`,
         'variant_not_found'
       );
     }
     const providers = hintedProviders(id, hints[id]);
-    const { info, key } = await specialized(engine, files, found.info, hints[id], chosen);
+    const chosen = mode?.variant ?? asked;
+    const special = await specialized(engine, files, found.info, hints[id], chosen);
+    const { key } = special;
+    const info = mode ? { ...special.info, ...mode.info } : special.info;
     const missing = await engine.missing(files, info, chosen);
     const patterns = engine.include(info, chosen);
     const uncovered = missing.filter((rel) => !patterns.some((p) => glob(p).test(rel)));
@@ -231,13 +247,15 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
     if (missing.length > 0) {
       const hint = download ? `; run: ${download}` : '';
       throw notFound(
-        `model ${id}:${chosen} is missing ${missing.length} file(s), such as ${missing[0]}${hint}`,
+        `model ${id}:${asked} is missing ${missing.length} file(s), such as ${missing[0]}${hint}`,
         'model_incomplete'
       );
     }
     return {
       id,
-      variant: chosen,
+      variant: asked,
+      mode: mode ? asked : null,
+      capability: mode?.capability ?? engine.capability,
       revision,
       engine,
       info,

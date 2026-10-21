@@ -76,7 +76,9 @@ export class Runtime {
 
   fits(job) {
     const entries = [...this.loaded.values()];
-    if (!job.key || this.loaded.has(job.key) || !entries.some((e) => e.busy > 0)) return true;
+    const own = job.key && this.loaded.get(job.key);
+    if (own) return !(own.busy > 0 && own.instance.exclusive);
+    if (!job.key || !entries.some((e) => e.busy > 0)) return true;
     return entries.filter((e) => e.busy > 0 || e.pins > 0).length < this.maxLoaded;
   }
 

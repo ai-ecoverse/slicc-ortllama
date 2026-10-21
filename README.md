@@ -64,7 +64,7 @@ curl -s localhost:11435/v1/audio/transcriptions -F file=@clip.wav -F response_fo
 | Route | |
 | --- | --- |
 | `GET /v1/models` | models and role aliases; System One models list `decisions` in `architecture.output_modalities` |
-| `POST /v1/chat/completions` | [OpenAI chat completions](#chat-completions) on the decoder engine |
+| `POST /v1/chat/completions` | [OpenAI chat completions](#chat-completions) on the decoder engine, and on [kev-ministral's base weights](#kev-ministrals-base-weights) |
 | `POST /v1/systemone` | TypeSafe's [System One](#system-one) protocol, on kev.js and jev-omni.js |
 | `POST /v1/audio/transcriptions` | OpenAI's [transcription](#transcription) API, on Whisper |
 | `GET /v1/realtime?intent=transcription` | OpenAI's [realtime transcription](#realtime-transcription) over WebSocket |
@@ -98,6 +98,19 @@ User messages may carry images as OpenAI `image_url` parts, which is what pi-ai 
 - **Reporting.** `/v1/models` names the encoder in use as `ortllama.vision_encoder`, with `vision_encoder_preferred` when a cached fallback stands in for the preferred one, and `generation_settings` reports the same. A model whose vision encoder is not cached lists only `text` in `architecture.input_modalities` and answers images with `400`.
 - **Caching.** The prefix cache keys image tokens on the image's SHA-256, so a conversation that resends the same image reuses it without encoding it again.
 
+#### kev-ministral's base weights
+
+`ai-ecoverse/kev-ministral/kev-ministral-3b:base` is [kev-ministral](#system-one) with its decision LoRA off (`lora_scale = 0`), which leaves the stock Ministral-3-3B-Base, and generates through kev.js's `generate`. It runs on the same kev.js load as `/v1/systemone`'s `ai-ecoverse/kev-ministral/kev-ministral-3b`: to the runtime both IDs are one model, listed once by `ortllama ps`, counted once against `ORTLLAMA_MAX_LOADED`, loaded and unloaded together. `/v1/models` lists the `:base` ID with `text` output. Each ID answers only on its own route; the other route answers `400` and names the ID that does.
+
+- **Prompt.** The base model has no chat template, so the messages become a transcript, one `System:`, `User:` or `Assistant:` line each, ending in `Assistant:`. Generation stops when the model starts another such line, at `stop`, at `</s>` or at the token limit. Control token names in client text are escaped, as for decisions.
+- **Images.** One per request, as an `image_url` part, decoded as above and placed where the part is, resized as Pixtral does to fit 1540 pixels (`detail` is not applied). A second image answers `400`.
+- **Sampling.** `temperature` defaults to 0 (greedy), `top_k` to 40; `seed` works, `top_p` is not applied and reported as 1. Tools, tool calls and `tool` messages answer `400`; `reasoning_effort` is ignored. There is no prefix cache: every request prefills its whole prompt. The context window is 73,728 tokens.
+- **Streaming.** kev.js generates in one call, so ortllama gates kev-ministral's ONNX sessions: after each token, the next run waits until its chunk is written (at most 250 ms) and gives up the runtime meanwhile, as for the decoder. kev.js runs one request at a time, so a System One request for kev-ministral, or a second `:base` request, waits until the generation ends.
+
+On an M4 Max, with kev-ministral loaded (7–9 s on host WebGPU, 6 s on four CPU threads), it prefills 65–110 tokens per second of text and generates 15–17 on host WebGPU, 31–42 on the CPU. Describing a 600 × 400 photo in 96 tokens takes 9.3 s on WebGPU and 8 s on the CPU. The Instruct model generates about 95 tokens per second on WebGPU and 20 on the CPU.
+
+On eight chat prompts and seven images (a photo, a chart, a receipt, a screenshot, shapes), the base model answered what the Instruct model did, in plainer text: the capital, a haiku, a 404 error, a translation, a summary, arithmetic, a JavaScript function, the chart's best seller, the receipt's total, the screen's text. It is worth it for a client that already uses kev-ministral for decisions and needs text or image descriptions too: one process then peaks at 8.5 GB on host WebGPU (8.1 GB on the CPU), against 12.5 GB (12.6 GB) with the Instruct model loaded next to kev-ministral, and with the default `ORTLLAMA_MAX_LOADED=1` it never swaps models, where each switch between kev-ministral and the Instruct model reloads for 5.6–6.8 s. A client that only chats is better served by `chat`, a 4.1 GB download against 6.6 GB and six times as fast on WebGPU.
+
 ### System One
 
 `POST /v1/systemone` speaks TypeSafe's System One protocol on [kev.js](https://github.com/ai-ecoverse/kev.js). Requests to a kev.js vision bundle (such as `ai-ecoverse/kev.js/kev-0.8b-vision`) or to kev-ministral take an `image` field, a `data:` URL string or `{ "url": … }`, decoded to RGBA for kev.js; text-only bundles answer it with `400`. pi-ai's System One client does not send images yet. Bundles known to work, with the load time and a warm three-question request (an image request for vision bundles) on an M4 Max:
@@ -122,7 +135,7 @@ Its adapter was trained for webrunner's menus, and that is where it is strongest
 | `ai-ecoverse/kev-ministral/kev-ministral-3b` | 6.6 GB | 0.733 / 0.414 | 7 / 7 of 10 | 7.7 s, 501 ms |
 | `ai-ecoverse/kev.js/kev-4b`, `kev-4b-vision` | 4.7 GB, 5.4 GB | 0.800 / 0.281 | 6 / 8 of 10 | 4.0 s, 353 ms |
 
-`decisions` stays on Kev-0.8B: kev-ministral is eight times its size, takes ten times as long to load and four times as long per request, and Kev-4B is the better general model at a smaller size. Point a client at kev-ministral for browser-agent steps. Its model card reports 69 % on Mind2Web's unseen websites, against 57.6 % for `kev-4b-vision`. The same weights with `lora_scale = 0` are the stock base model: kev.js's `generate` produces text from them, but ortllama does not serve that yet.
+`decisions` stays on Kev-0.8B: kev-ministral is eight times its size, takes ten times as long to load and four times as long per request, and Kev-4B is the better general model at a smaller size. Point a client at kev-ministral for browser-agent steps. Its model card reports 69 % on Mind2Web's unseen websites, against 57.6 % for `kev-4b-vision`. The same weights with `lora_scale = 0` are the stock base model, which `/v1/chat/completions` serves from the same load as [`ai-ecoverse/kev-ministral/kev-ministral-3b:base`](#kev-ministrals-base-weights).
 
 [Jev-Omni](https://github.com/ai-ecoverse/jev-omni.js) (`ai-ecoverse/jev-omni.js/jev-omni`, Gemma 4 12B with a 256-way decision head, 13.6 GB) answers the same requests through [jev-omni.js](https://github.com/ai-ecoverse/jev-omni.js), with `@ai-ecoverse/jev-omni.js` installed. Each question is one forward pass over the state, its instructions and its options: a choice's criteria, `no` and `yes` for a noul, a score's levels. Answers, confidences and `usage` follow the same rules as Kev's. Jev-Omni takes 2 to 256 options per question, so a choice with one criterion answers `400`. An `image` is embedded once per request. On WebGPU, onnxruntime-web limits a prompt to about 8,000 tokens; a longer one answers `422` with code `context_length_exceeded`. On an M4 Max, it loads in 7.3 s on the host CPU and answers the three-question request in 3 s; on host WebGPU, 2.6–5.8 s and 0.9 s; in the kernel, 13–23 s and 1–1.2 s. Loading peaks at 13.3 GB on host WebGPU (15.9 GB on the CPU), and in the kernel at 3.3 GiB in Chrome's page process and 13 GiB in its GPU process. That needs jev-omni.js 0.2 or later: 0.1 reads every weight into memory first, which peaks at 30 GB on the host and fails to allocate in the kernel.
 
@@ -292,11 +305,12 @@ A model whose library is missing is still listed, and requests for it answer `50
 | --- | --- | --- |
 | decoder | 3 prompts, the reference's greedy tokens with their log-probabilities and the margin to the runner-up | the tokens, fed back one by one, keep a mean log-probability within 0.15 nats, and no step with a margin over 1 nat picks another token |
 | systemone | 12 System One requests (plus an image for vision bundles) with their raw decision probabilities | mean change ≤ 0.02, at most 0.25, and no clear answer flips |
+| systemone, kev-ministral `:base` | 3 prompts and an image, with the reference's 24 greedy tokens each (`kev-ministral-3b.base.json`) | fed the reference's tokens wherever they differ, at most 10 % of the tokens change |
 | whisper | 4 clips: `fox.wav`, a 32-second English story, French and Spanish (Kokoro voices, 8 kHz 8-bit) | the language is detected and the word error rate stays within 0.1 of the reference's |
 | kokoro | 3 sentences as token IDs, so the phonemizer does not matter, with a 40-band log-mel summary | the mel spectrogram stays within 2 dB and the length within 5 %; phonemes are compared and reported |
 | silero | speech probabilities for every 32 ms frame of two clips | mean change ≤ 0.01, at most 0.1, and no clear speech/silence flip |
 
-The tolerances leave room over what WebGPU differs from CPU, measured on host Node and in slicc-kernel (both alike): decoder mean 0.026–0.063 nats (max 0.48, flips only below a 0.55 margin; Ministral 3 3B to 14B), System One mean 0.006 (max 0.027 for Kev, 0.051 for kev-ministral), Kokoro 0.15–0.24 dB, Whisper and Silero none. Kokoro's `q8` variant lands at 2–5 dB and its `fp16` on WebGPU, which sounds garbled, at 25 dB. Fixtures hold the default variant; other variants can fall outside them, and `check` says so. `node scripts/fixtures.mjs <model>…` writes them on the host CPU (`node scripts/fixtures.mjs audio` makes the clips with Kokoro).
+The tolerances leave room over what WebGPU differs from CPU, measured on host Node and in slicc-kernel (both alike): decoder mean 0.026–0.063 nats (max 0.48, flips only below a 0.55 margin; Ministral 3 3B to 14B), System One mean 0.006 (max 0.027 for Kev, 0.051 for kev-ministral), kev-ministral's base weights 2 of 96 tokens on host WebGPU, Kokoro 0.15–0.24 dB, Whisper and Silero none. Kokoro's `q8` variant lands at 2–5 dB and its `fp16` on WebGPU, which sounds garbled, at 25 dB. Fixtures hold the default variant; other variants can fall outside them, and `check` says so. `node scripts/fixtures.mjs <model>…` writes them on the host CPU (`node scripts/fixtures.mjs audio` makes the clips with Kokoro).
 
 ## Execution providers
 
@@ -352,7 +366,7 @@ Each integration test runs when its models are in the Hugging Face cache; `ORTLL
 | Tests | Models |
 | --- | --- |
 | Kev | `ai-ecoverse/kev.js/kev-0.8b` |
-| kev-ministral | `ai-ecoverse/kev-ministral/kev-ministral-3b` |
+| kev-ministral, its base weights | `ai-ecoverse/kev-ministral/kev-ministral-3b` |
 | Whisper | `onnx-community/whisper-tiny` |
 | Realtime | `onnx-community/whisper-tiny`, `onnx-community/silero-vad` |
 | Chat | `mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16` |

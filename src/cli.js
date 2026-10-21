@@ -221,6 +221,8 @@ async function alias(values, positionals, io) {
   return 0;
 }
 
+export const fixtureName = ({ id, mode }) => `${id}${mode ? `.${mode}` : ''}.json`;
+
 async function check(values, positionals, io) {
   const [id] = positionals;
   if (!id) {
@@ -231,7 +233,7 @@ async function check(values, positionals, io) {
   const resolved = await catalog.resolve(id);
   const found = values.fixtures
     ? await readFixtures(values.fixtures)
-    : await readFixtures(join(io.fixtures, `${resolved.id}.json`), { optional: true });
+    : await readFixtures(join(io.fixtures, fixtureName(resolved)), { optional: true });
   const fixtures = found?.fixtures ?? null;
   const engine = resolved.engine;
   const runtime = io.runtime ?? createRuntime({ env: io.env, keepAlive: '0' });
@@ -246,7 +248,7 @@ async function check(values, positionals, io) {
     executionProviders: entry.executionProviders,
     loadMs: entry.loadMs,
     ...(found ? { fixtures: found.path, reference: found.about } : {}),
-    ...(await engine.check(entry.instance, { fixtures })),
+    ...(await engine.check(entry.instance, { fixtures, variant: resolved.variant })),
   };
   await runtime.close();
   if (values.json) io.out.write(`${JSON.stringify(report, null, 2)}\n`);

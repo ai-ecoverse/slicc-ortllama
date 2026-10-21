@@ -1,6 +1,8 @@
 import { posix } from 'node:path';
+import { attachImages, parseChatRequest } from '../chat.js';
 import { badRequest, HttpError } from '../http/errors.js';
 import { imageFromUrl } from '../images.js';
+import { BASE_MODE, baseChat, basePrompt, gatedOrt } from './ministral-base.js';
 import { optional } from './optional.js';
 
 export const KEV = '@ai-ecoverse/kev.js';
@@ -105,14 +107,22 @@ async function detectMinistral(files) {
   }
   if (!isMinistral(manifest)) return null;
   if (!(await files.exists('onnx/decoder_model_merged.onnx'))) return null;
+  const inputModalities = manifest.files.vision_encoder ? ['text', 'image'] : ['text'];
   return {
     ministral: true,
     variants: [MINISTRAL_VARIANT],
     defaultVariant: MINISTRAL_VARIANT,
-    inputModalities: manifest.files.vision_encoder ? ['text', 'image'] : ['text'],
+    inputModalities,
     outputModalities: ['decisions'],
     contextLength: MINISTRAL_CONTEXT,
     manifest,
+    modes: {
+      [BASE_MODE]: {
+        variant: MINISTRAL_VARIANT,
+        capability: 'chat',
+        info: { inputModalities, outputModalities: ['text'] },
+      },
+    },
   };
 }
 
@@ -136,8 +146,9 @@ function folder(part) {
   return dir === '.' ? weights(part) : [`${dir}/*`];
 }
 
-function serving(kev, { ValidationError, ContextOverflow }) {
+function serving(kev, { ValidationError, ContextOverflow }, extra = {}) {
   return {
+    ...extra,
     probs: (record, image) => kev.probs(record, image),
     async systemOne(request) {
       if (request.image !== undefined && !kev.acceptsImages)
@@ -190,16 +201,25 @@ export const systemone = {
         code: 'engine_unavailable',
       });
     const local = localWeights(backend, files);
+    const gated = ministral ? gatedOrt(backend.ort) : null;
     const kev = await loader((rel) => files.read(rel), {
       ...local.options,
-      ort: backend.ort,
+      ort: gated?.ort ?? backend.ort,
       ...(ministral ? {} : { variant }),
       executionProviders: backend.executionProviders,
       sessionOptions: backend.sessionOptions,
       cacheName: null,
       ...overrides,
     }).finally(local.clear);
-    return serving(kev, kevjs);
+    if (!ministral) return serving(kev, kevjs);
+    return serving(kev, kevjs, {
+      exclusive: true,
+      chat: baseChat({ kev, gate: gated.gate, kevjs, contextLength: info.contextLength }),
+      async complete(request, maxTokens, forced = []) {
+        const { ids, image } = basePrompt(kev, request, kevjs);
+        return kev.generate([...ids, ...forced], { maxTokens, image });
+      },
+    });
   },
 };
 
@@ -261,7 +281,66 @@ export function compareFixtures(results, fixtures) {
 
 systemone.checkOverrides = (fixtures) => (fixtures ? { temperature: 1 } : {});
 
-systemone.check = async (instance, { fixtures, now = () => performance.now() } = {}) => {
+export async function baseRequest(messages) {
+  const { request } = parseChatRequest({ messages });
+  await attachImages(request);
+  return request;
+}
+
+const BASE_FLIPS = 0.1;
+
+export async function forcedFlips(instance, request, ref) {
+  const flips = [];
+  let at = 0;
+  while (at < ref.length) {
+    const { ids } = await instance.complete(request, ref.length - at, ref.slice(0, at));
+    let n = 0;
+    while (at + n < ref.length && ids[n] === ref[at + n]) n++;
+    if (at + n === ref.length) break;
+    flips.push(at + n);
+    at += n + 1;
+  }
+  return flips;
+}
+
+export function compareTokens(flips, fixtures) {
+  const tokens = fixtures.reduce((n, f) => n + f.tokens.length, 0);
+  const changed = flips.flatMap((list, i) => list.map((at) => `${fixtures[i].name}#${at}`));
+  return { tokens, flips: changed, ok: changed.length <= tokens * BASE_FLIPS };
+}
+
+async function checkBase(instance, { fixtures, now }) {
+  const started = now();
+  let answer = '';
+  const result = await instance.chat(
+    {
+      messages: [{ role: 'user', content: 'Say hello in five words.' }],
+      tools: [],
+      stop: [],
+      maxTokens: 24,
+    },
+    {
+      emit(event) {
+        if (event.type === 'content') answer += event.text;
+      },
+    }
+  );
+  const smoke = { ok: answer.length > 0, requestMs: now() - started, answer, ...result };
+  if (!fixtures) return smoke;
+  const flips = [];
+  for (const f of fixtures)
+    flips.push(await forcedFlips(instance, await baseRequest(f.messages), f.tokens));
+  const compared = compareTokens(flips, fixtures);
+  return {
+    ...smoke,
+    ...compared,
+    summary: `fixtures: ${compared.tokens} greedy tokens, ${compared.flips.length} changed${compared.flips.length ? ` (${compared.flips.join(', ')})` : ''}`,
+    ok: smoke.ok && compared.ok,
+  };
+}
+
+systemone.check = async (instance, { fixtures, variant, now = () => performance.now() } = {}) => {
+  if (variant === BASE_MODE) return checkBase(instance, { fixtures, now });
   const started = now();
   const answer = await instance.systemOne(SMOKE);
   const requestMs = now() - started;
