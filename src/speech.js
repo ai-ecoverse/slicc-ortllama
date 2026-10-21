@@ -73,7 +73,9 @@ const immediate = () => new Promise((resolve) => setImmediate(resolve));
 function schedule({ resolved, runtime, request, signal, gate }) {
   const job = (fn, ready) => ignored(runtime.use(resolved, PRIORITY.speech, fn, signal, ready));
   const { voice, speed } = request;
-  const sentences = splitSentences(request.input).flatMap((s) => splitLong(s));
+  const sentences = resolved.engine.splits
+    ? [request.input]
+    : splitSentences(request.input).flatMap((s) => splitLong(s));
   let count = 0;
   let previous = Promise.resolve();
   const synthesis = (ids) => {

@@ -7,7 +7,7 @@ import { createTokenizer } from '../../src/phonon/tokenizer.js';
 
 const PHONON = 'ai-ecoverse/phonon-31m-en-ONNX';
 const TEXT =
-  'The quick brown fox jumps over the lazy dog. Then it runs into the forest, where nobody can find it.';
+  'The old lighthouse stood at the edge of the cliff for more than a hundred years. Every night its keeper climbed the narrow stairs, trimmed the wick, and watched the beam sweep across the dark water. Ships passing in the fog relied on that steady light to find their way around the rocks.';
 
 const PTTS = [
   ['I paid $45.99 for the headphones.', 'I paid 45 dollars and 99 cents for the headphones.'],
@@ -119,7 +119,7 @@ describe('Phonon speech', { skip }, () => {
       body: JSON.stringify({ model: PHONON, response_format: 'pcm', ...body }),
     });
 
-  test('streams 24 kHz speech sentence by sentence in the default voice', async () => {
+  test('streams 24 kHz speech chunk by chunk in the default voice', async () => {
     await (await post({ input: 'Hi.' })).arrayBuffer();
     const started = performance.now();
     const response = await post({ input: TEXT });

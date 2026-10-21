@@ -13,6 +13,10 @@ const SEED = 0x2a2a2a2a;
 const DECODE_BATCH = 16;
 const PIPELINE = ['config.json', 'tokenizer.json'];
 
+const dispose = (...tensors) => {
+  for (const t of tensors) t?.dispose?.();
+};
+
 const graphFile = (name, suffix) => `onnx/${name}${suffix}.onnx`;
 const voiceFile = (voice) => `voices/${voice}.bin`;
 
@@ -108,7 +112,9 @@ function flowLm(ort, session, { num_layers: layers, num_heads: heads, head_dim: 
       const present = [];
       for (let i = 0; i < layers; i++)
         present.push(out[`present.${i}.key`], out[`present.${i}.value`]);
-      return { hidden: out.hidden, eos: (await out.eos_logit.getData())[0], present };
+      const eos = (await out.eos_logit.getData())[0];
+      dispose(out.eos_logit);
+      return { hidden: out.hidden, eos, present };
     },
   };
 }
@@ -118,7 +124,11 @@ function mimiDecoder(ort, session, { mimi_state: shapes, latent_dim: latentDim }
   for (const [n, shape] of shapes)
     state[n] = new ort.Tensor('float32', new Float32Array(shape.reduce((a, b) => a * b, 1)), shape);
   let offset = new ort.Tensor('int64', BigInt64Array.from([0n]), []);
-  return async (latents) => {
+  const replace = (old, next) => {
+    if (old !== next) dispose(old);
+    return next;
+  };
+  const decode = async (latents) => {
     const data = new Float32Array(latents.length * latentDim);
     for (const [i, l] of latents.entries()) data.set(l, i * latentDim);
     const feeds = {
@@ -127,10 +137,15 @@ function mimiDecoder(ort, session, { mimi_state: shapes, latent_dim: latentDim }
     };
     for (const [n] of shapes) feeds[`state.${n}`] = state[n];
     const out = await session.run(feeds);
-    offset = out.next_offset;
-    for (const [n] of shapes) state[n] = out[`next_state.${n}`];
-    return new Float32Array(await out.audio.getData());
+    dispose(feeds.latent);
+    offset = replace(offset, out.next_offset);
+    for (const [n] of shapes) state[n] = replace(state[n], out[`next_state.${n}`]);
+    const audio = new Float32Array(await out.audio.getData());
+    dispose(out.audio);
+    return audio;
   };
+  decode.close = () => dispose(offset, ...Object.values(state));
+  return decode;
 }
 
 function createSpeaker({ ort, files, sessions, config }) {
@@ -147,7 +162,10 @@ function createSpeaker({ ort, files, sessions, config }) {
           bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
         );
         const embeds = new ort.Tensor('float32', data, [1, data.length / width, width]);
-        return (await lm.run(embeds, lm.empty())).present;
+        const empty = lm.empty();
+        const out = await lm.run(embeds, empty);
+        dispose(embeds, out.hidden, ...empty);
+        return out.present;
       })();
       prompts.set(voice, pending);
       pending.catch(() => prompts.delete(voice));
@@ -155,42 +173,66 @@ function createSpeaker({ ort, files, sessions, config }) {
     return prompts.get(voice);
   }
 
-  return async function generate(chunk, voice, options = {}) {
-    const { temperature = TEMPERATURE, seed = SEED, noise, signal } = options;
+  async function frame(state, draw, f) {
+    const out = await lm.run(state.step, state.past);
+    dispose(state.step, ...state.past);
+    state.past = out.present;
+    const z = new ort.Tensor('float32', draw(meta.latent_dim, f), [1, meta.latent_dim]);
+    const flow = await sessions.flow_lm_flow.run({ hidden: out.hidden, noise: z });
+    dispose(out.hidden, z);
+    state.step = flow.next_embeds;
+    const latent = new Float32Array(await flow.latent.getData());
+    dispose(flow.latent);
+    return { latent, eos: out.eos };
+  }
+
+  async function generate(chunk, voice, options = {}) {
+    const { temperature, seed, noise, signal } = options;
     const batch = options.batch ?? DECODE_BATCH;
+    const draw =
+      noise ??
+      (temperature === undefined && seed === undefined ? chunk.noise : null) ??
+      seededNormal(seed ?? SEED, temperature ?? TEMPERATURE);
     const ids = BigInt64Array.from(chunk.tokens, BigInt);
-    const text = await sessions.text_conditioner.run({
-      input_ids: new ort.Tensor('int64', ids, [1, ids.length]),
-    });
-    let past = (await lm.run(text.inputs_embeds, await prompt(voice))).present;
-    let step = text.bos_embeds;
-    const draw = noise ?? seededNormal(seed, temperature);
+    const input = new ort.Tensor('int64', ids, [1, ids.length]);
+    const text = await sessions.text_conditioner.run({ input_ids: input });
+    const first = await lm.run(text.inputs_embeds, await prompt(voice));
+    dispose(input, text.inputs_embeds, first.hidden);
+    const state = { past: first.present, step: text.bos_embeds };
     const decode = mimiDecoder(ort, sessions.mimi_decoder, meta);
     const stop = eosPolicy(chunk.framesAfterEos);
     const frames = [];
     const latents = [];
     const eos = [];
     let pending = 0;
-    for (let f = 0; f < chunk.frameBudget; f++) {
-      signal?.throwIfAborted();
-      const out = await lm.run(step, past);
-      past = out.present;
-      const z = new ort.Tensor('float32', draw(meta.latent_dim, f), [1, meta.latent_dim]);
-      const flow = await sessions.flow_lm_flow.run({ hidden: out.hidden, noise: z });
-      step = flow.next_embeds;
-      latents.push(new Float32Array(await flow.latent.getData()));
-      eos.push(out.eos);
-      pending++;
-      const done = stop(out.eos > config.eos_threshold);
-      if (pending >= batch || done) {
-        frames.push(await decode(latents.slice(latents.length - pending)));
-        pending = 0;
+    try {
+      for (let f = 0; f < chunk.frameBudget; f++) {
+        signal?.throwIfAborted();
+        const out = await frame(state, draw, f);
+        latents.push(out.latent);
+        eos.push(out.eos);
+        pending++;
+        const done = stop(out.eos > config.eos_threshold);
+        if (pending >= batch || done) {
+          frames.push(await decode(latents.slice(latents.length - pending)));
+          pending = 0;
+        }
+        if (done) break;
       }
-      if (done) break;
+      if (pending) frames.push(await decode(latents.slice(latents.length - pending)));
+    } finally {
+      dispose(state.step, ...state.past);
+      decode.close();
     }
-    if (pending) frames.push(await decode(latents.slice(latents.length - pending)));
     return { audio: concat(frames), latents, eos };
-  };
+  }
+
+  async function release() {
+    for (const pending of prompts.values()) dispose(...(await pending.catch(() => [])));
+    prompts.clear();
+  }
+
+  return { generate, release };
 }
 
 async function availableVoices(files, meta) {
@@ -202,6 +244,7 @@ async function availableVoices(files, meta) {
 export const phonon = {
   name: 'phonon',
   capability: 'speech',
+  splits: true,
   providers: { node: ['cpu'], web: ['wasm'] },
   async detect(files) {
     if (!(await files.exists('config.json'))) return null;
@@ -262,7 +305,7 @@ export const phonon = {
     const defaultVoice = voices.includes(config.onnx.default_voice)
       ? config.onnx.default_voice
       : voices[0];
-    const speak = createSpeaker({ ort, files, sessions, config });
+    const speaker = createSpeaker({ ort, files, sessions, config });
 
     function voiceName(voice) {
       const name = voiceSlug(voice ?? defaultVoice);
@@ -274,10 +317,13 @@ export const phonon = {
       voiceName(voice);
       const chunks = plan(tokenizer, text, { frameRate: config.mimi.frame_rate });
       if (chunks.length === 0) throw badRequest('input has nothing to say', 'input');
+      const noise = seededNormal(SEED, TEMPERATURE);
+      for (const c of chunks) c.noise = noise;
       return chunks;
     }
 
-    const generate = (chunk, { voice, ...options } = {}) => speak(chunk, voiceName(voice), options);
+    const generate = (chunk, { voice, ...options } = {}) =>
+      speaker.generate(chunk, voiceName(voice), options);
 
     async function synthesize(chunk, { speed = 1, ...options } = {}) {
       if (speed !== 1) throw badRequest('phonon speaks at one speed; use speed 1', 'speed');
@@ -300,6 +346,7 @@ export const phonon = {
         }
       },
       async release() {
+        await speaker.release();
         for (const s of Object.values(sessions)) await s.release?.();
       },
     };

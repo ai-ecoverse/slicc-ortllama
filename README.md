@@ -184,7 +184,7 @@ Audio is `audio/pcm` at 8–48 kHz (24 kHz by default). Turns are detected by `s
 
 - `model` defaults to the `speech` role, `voice` to `af_heart`, and `instructions` is accepted and ignored.
 - `response_format` is `wav` (the default), `pcm` (24 kHz mono 16-bit little-endian), `mp3` (`audio/mpeg`, 64 kbit/s), `opus` (Ogg Opus, `audio/opus`, 32 kbit/s), `flac` (`audio/flac`) or `aac` (ADTS, `audio/aac`, AAC-LC, mono, 64 kbit/s, from the codec [AAC](#aac) describes, at 96 kbit/s on Windows' WebCodecs encoder; `400` without one). ADTS has no gapless data, so a decoder starts with the encoder's delay, 85 ms with `@audio/encode-aac`. mp3 is encoded in JavaScript as MPEG-1, 2 or 2.5 Layer III, mono, at the nearest mp3 sample rate, with constant bitrate and long blocks only, no psychoacoustic model and no gapless header, so a decoder adds about 44 ms of silence at the start at 24 kHz.
-- `input` takes up to 4096 characters. It is split into sentences, long ones at clause marks or spaces, and each piece's audio is sent as soon as it is ready. A piece is synthesized only once the one before it has been written to the socket, or after 250 ms if the client is not reading, so on single-threaded WASM, where a synthesis blocks the program, the first sentence still arrives while the rest is synthesized.
+- `input` takes up to 4096 characters. It is split into sentences, long ones at clause marks or spaces (Phonon cuts it itself, [as ptts does](#phonon)), and each piece's audio is sent as soon as it is ready. A piece is synthesized only once the one before it has been written to the socket, or after 250 ms if the client is not reading, so on single-threaded WASM, where a synthesis blocks the program, the first sentence still arrives while the rest is synthesized.
 
 ```sh
 hf download onnx-community/Kokoro-82M-v1.0-ONNX --include config.json tokenizer.json onnx/model.onnx 'voices/*'
@@ -225,16 +225,16 @@ No such export is published yet. Issue #102's feasibility run made one from the 
 - **Text.** Gradium's runtime, `ptts --lang en`, normalizes English before it tokenizes it. ortllama does the same in JavaScript (`src/phonon/`) and gets the same token IDs on 361 test inputs: numbers, currency, dates, emails, URLs, abbreviations, symbols, chunking and fitting. Numbers stay as digits unless they have scale words, as in ptts: `$45.99` reads "45 dollars and 99 cents", `1,234` reads "1 thousand 234", and `https://docs.example.org` is spelled out piece by piece.
 - **Voices.** The 37 English voices of [gradium/phonon-voices](https://huggingface.co/gradium/phonon-voices), named in lowercase with dashes: `easton` (the default), `freya`, `zoey`, `elodie-rose`, `captain-silas-blackwater` and so on. Any capitalization works.
 - **Sampling.** Temperature 0.3, as in ptts. The noise comes from a seeded generator, so a request always sounds the same. It is not ptts's ChaCha12 stream, though, so the same seed does not give ptts's audio. Given the same noise, the export's latents and audio match ptts's.
-- **Chunks.** Each sentence starts again from the voice prompt, as each of ptts's chunks does. ptts groups sentences into chunks of up to 50 tokens, while ortllama sends one sentence at a time, as it does for Kokoro. `speed` other than 1 answers `400`: Phonon has no speed control.
+- **Chunks.** Phonon gets the whole input and cuts it as ptts does: at ptts's sentence ends, into chunks of up to 50 tokens. Each chunk starts again from the voice prompt and is sent as soon as it is ready. One noise stream runs through the request, as ptts's random generator does. `speed` other than 1 answers `400`: Phonon has no speed control.
 - **Variants.** `fp32` is the default. `q8` is 8-bit `MatMulNBits` on the flow LM only, as ptts quantizes it, and keeps the Mimi decoder in fp32. `fp16` is the whole graph in half precision. `q4` sounds noticeably worse and is there for comparison.
 
-Speed for four sentences (20 s of audio) on an M4 Max, as real-time factor and time until the first sentence is ready. Host numbers use 4 threads. Kernel numbers are `ortllama check`'s two sentences (4.7 s), on single-threaded WASM; Chrome's page process peaks at 1 GiB. For comparison, ptts itself (f32, 4 threads, streaming each frame) has a real-time factor of 0.023 and its first audio after 16 ms, and Kokoro fp32 on the host CPU 0.17 and 785 ms:
+Speed for four sentences (20 s of audio) on an M4 Max, as real-time factor and time until the first chunk is ready. Host numbers use 4 threads. Kernel numbers are `ortllama check`'s two sentences (4.7 s), on single-threaded WASM; Chrome's page process peaks at 1 GiB. For comparison, ptts itself (f32, 4 threads, streaming each frame) has a real-time factor of 0.023 and its first audio after 16 ms, and Kokoro fp32 on the host CPU 0.17 and 785 ms:
 
 | Variant | Host CPU | Host WebGPU | Kernel WASM | Kernel WebGPU |
 | --- | --- | --- | --- | --- |
-| `fp32` | 0.043, 160 ms | 0.18, 690 ms | 0.25 | 0.49 |
-| `q8` | 0.037, 141 ms | 0.14, 574 ms | 0.56 | 0.20 |
-| `fp16` | 0.061, 228 ms | 0.17, 698 ms | 0.28 | 0.47 |
+| `fp32` | 0.044, 169 ms | 0.12, 469 ms | 0.25 | 0.49 |
+| `q8` | 0.035, 130 ms | 0.11, 431 ms | 0.56 | 0.20 |
+| `fp16` | 0.057, 224 ms | 0.13, 452 ms | 0.28 | 0.47 |
 
 Phonon loads on the CPU on the host and on WASM in the kernel. Each 80 ms frame takes three small graph runs, so per-run overhead decides the speed, and WebGPU pays the most of it. Set `ORTLLAMA_EP` to use WebGPU anyway. Whisper large-v3-turbo hears 20 test sentences with a word error rate of 7.4 % from Phonon `fp32`, 6.5 % from `q8` and 7.4 % from ptts itself. It hears 5.3 % from Kokoro's `af_heart`. Every difference in Phonon's transcripts is the way a number or symbol is written, such as "9" for "nine", and none is a misread word.
 
