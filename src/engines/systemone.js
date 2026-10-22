@@ -38,6 +38,7 @@ export function heldReads(files, budget = HELD_BYTES) {
 }
 
 async function graphGroups(files, patterns) {
+  if (patterns.length === 0) return [];
   const groups = Map.groupBy(await files.matches(patterns), (rel) => posix.dirname(rel));
   return [...groups.values()].filter((group) => group.some((rel) => rel.endsWith('.onnx')));
 }
