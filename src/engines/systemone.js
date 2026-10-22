@@ -139,7 +139,11 @@ function weights(part) {
   return part ? [part.model, ...(part.data ?? [])] : [];
 }
 
-export function needed(info, variant) {
+export function bundleFiles(info, variant) {
+  return info?.manifest ? needed(info, variant) : [];
+}
+
+function needed(info, variant) {
   const { manifest } = info;
   if (info.ministral) return ministralNeeded(manifest);
   return [
@@ -209,7 +213,7 @@ export const systemone = {
       throw new HttpError(501, `this model needs ${KEV} ${MINISTRAL_KEV} or later`, {
         code: 'engine_unavailable',
       });
-    const local = await localWeights(backend, files, needed(info, variant));
+    const local = await localWeights(backend, files, bundleFiles(info, variant));
     const gated = ministral ? gatedOrt(backend.ort) : null;
     const kev = await loader((rel) => files.read(rel), {
       ...local.options,
