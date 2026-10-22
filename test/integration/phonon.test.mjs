@@ -119,7 +119,7 @@ describe('Phonon speech', { skip }, () => {
       body: JSON.stringify({ model: PHONON, response_format: 'pcm', ...body }),
     });
 
-  test('streams 24 kHz speech chunk by chunk in the default voice', async () => {
+  test('streams 24 kHz speech frame by frame in the default voice', async () => {
     await (await post({ input: 'Hi.' })).arrayBuffer();
     const started = performance.now();
     const response = await post({ input: TEXT });
@@ -132,7 +132,7 @@ describe('Phonon speech', { skip }, () => {
       chunks.push(chunk);
     }
     const total = performance.now() - started;
-    assert.ok(first < total * 0.8, `first audio after ${first} of ${total} ms`);
+    assert.ok(first < total * 0.25, `first audio after ${first} of ${total} ms`);
     const { seconds, rms } = pcmStats(new Uint8Array(Buffer.concat(chunks)));
     plausible(seconds, TEXT);
     assert.ok(rms > 0.02, `rms ${rms}`);
@@ -149,13 +149,37 @@ describe('Phonon speech', { skip }, () => {
     plausible(samples.length / 24000, input);
   });
 
-  test('answers 400 for an unknown voice and for another speed', async () => {
+  test('answers 400 for an unknown voice and for a speed out of range', async () => {
     const voice = await post({ input: 'Hi.', voice: 'af_heart' });
     assert.equal(voice.status, 400);
     assert.equal((await voice.json()).error.param, 'voice');
-    const speed = await post({ input: 'Hi.', speed: 1.5 });
+    const speed = await post({ input: 'Hi.', speed: 4.5 });
     assert.equal(speed.status, 400);
     assert.equal((await speed.json()).error.param, 'speed');
+  });
+
+  test('speaks faster and slower when the export takes duration_delta, else answers 400', async () => {
+    const resolved = await (
+      await openCatalog({ env: { ...process.env, ORTLLAMA_MODEL_PATH: '' } })
+    ).resolve(PHONON);
+    const config = await resolved.files.json('config.json');
+    const input = 'The committee will meet again on Thursday afternoon to review the budget.';
+    const seconds = async (speed) => {
+      const response = await post({ input, speed });
+      if (response.status !== 200) return response;
+      return pcmStats(new Uint8Array(await response.arrayBuffer())).seconds;
+    };
+    if (config.onnx.inputs?.duration_delta === undefined) {
+      const response = await seconds(1.25);
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).error.param, 'speed');
+      return;
+    }
+    const normal = await seconds(1);
+    const fast = await seconds(1.25);
+    const slow = await seconds(0.85);
+    assert.ok(fast < normal * 0.92 && slow > normal * 1.05, `${fast} ${normal} ${slow} s`);
+    assert.ok((await seconds(4)) <= fast && (await seconds(0.25)) >= slow * 0.97);
   });
 
   test('lists Phonon as a speech model', async () => {

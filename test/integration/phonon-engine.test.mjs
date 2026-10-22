@@ -51,8 +51,15 @@ function memoryFiles() {
   };
 }
 
-function fakeOrt() {
+function spin(ms) {
+  const until = performance.now() + ms;
+  while (performance.now() < until);
+}
+
+function fakeOrt({ eosAt = 3, spinMs = 0, paced = false } = {}) {
   const outputs = [];
+  const deltas = [];
+  const flows = [];
   const noises = [];
   const runs = {};
   class Tensor {
@@ -84,7 +91,8 @@ function fakeOrt() {
       const t = feeds.inputs_embeds.dims[1];
       const p = feeds['past_key_values.0.key'].dims[2];
       steps += t === 1 ? 1 : 0;
-      const eos = t === 1 && steps % 3 === 0 ? 9 : -9;
+      const eos = t === 1 && steps % eosAt === 0 ? 9 : -9;
+      if (t === 1) spin(spinMs);
       return {
         hidden: made('float32', new Float32Array(4), [1, 4]),
         eos_logit: made('float32', Float32Array.of(eos), [1, 1]),
@@ -93,6 +101,7 @@ function fakeOrt() {
       };
     },
     flow_lm_flow: ({ noise }) => {
+      flows.push(performance.now());
       noises.push([...noise.data]);
       return {
         latent: made('float32', Float32Array.from(noise.data), [1, 1, 2]),
@@ -110,10 +119,15 @@ function fakeOrt() {
     InferenceSession: {
       async create(bytes) {
         const name = new TextDecoder().decode(bytes);
+        const conditioned = paced && ['text_conditioner', 'flow_lm_flow'].includes(name);
         return {
+          inputNames: conditioned ? ['duration_delta'] : [],
           async run(feeds) {
             for (const t of Object.values(feeds))
               if (t.disposed) throw new Error(`${name} was fed a disposed tensor`);
+            if (conditioned && !feeds.duration_delta)
+              throw new Error(`input 'duration_delta' is missing in 'feeds'`);
+            if (feeds.duration_delta) deltas.push([name, feeds.duration_delta.data[0]]);
             runs[name] = (runs[name] ?? 0) + 1;
             return graphs[name](feeds);
           },
@@ -122,11 +136,11 @@ function fakeOrt() {
       },
     },
   };
-  return { ort, outputs, noises, runs };
+  return { ort, outputs, noises, runs, deltas, flows };
 }
 
-async function load() {
-  const fake = fakeOrt();
+async function load(options) {
+  const fake = fakeOrt(options);
   const files = memoryFiles();
   const instance = await phonon.load({
     backend: { ort: fake.ort, executionProviders: ['cpu'] },
@@ -167,40 +181,140 @@ test('generation frees every tensor but the cached voice prompt, which release f
   assert.equal(outputs.filter((t) => !t.disposed).length, 0);
 });
 
+async function serve(options) {
+  const fake = fakeOrt(options);
+  const files = memoryFiles();
+  const resolved = {
+    key: 'test/phonon',
+    id: 'test/phonon',
+    variant: 'fp32',
+    files,
+    info: await phonon.detect(files),
+    engine: phonon,
+  };
+  const catalog = { aliases: {}, list: async () => [], resolve: async () => resolved };
+  const runtime = createRuntime({
+    env: {},
+    backend: async () => ({ ort: fake.ort, track: 'node', executionProviders: ['cpu'] }),
+  });
+  const server = await startServer({ env: {}, port: 0, catalog, runtime });
+  const post = (body) =>
+    fetch(`${server.url}/v1/audio/speech`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ response_format: 'pcm', ...body }),
+    });
+  return { fake, server, post };
+}
+
 describe('speech hands Phonon the whole input', () => {
-  let server;
-  let fake;
+  let served;
 
   before(async () => {
-    fake = fakeOrt();
-    const files = memoryFiles();
-    const resolved = {
-      key: 'test/phonon',
-      id: 'test/phonon',
-      variant: 'fp32',
-      files,
-      info: await phonon.detect(files),
-      engine: phonon,
-    };
-    const catalog = { aliases: {}, list: async () => [], resolve: async () => resolved };
-    const runtime = createRuntime({
-      env: {},
-      backend: async () => ({ ort: fake.ort, track: 'node', executionProviders: ['cpu'] }),
-    });
-    server = await startServer({ env: {}, port: 0, catalog, runtime });
+    served = await serve();
   });
-  after(() => server?.close());
+  after(() => served?.server.close());
 
   test('abbreviations the sentence splitter does not know stay in their sentence', async () => {
     const input = 'Ft. Worth is large. Vol. 2 is out.';
     assert.equal(normalizeEnglish(input), 'Fort Worth is large. Volume 2 is out.');
-    const response = await fetch(`${server.url}/v1/audio/speech`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ input, response_format: 'pcm' }),
-    });
+    const response = await served.post({ input });
     assert.equal(response.status, 200);
     assert.ok((await response.arrayBuffer()).byteLength > 0);
-    assert.equal(fake.runs.text_conditioner, 1);
+    assert.equal(served.fake.runs.text_conditioner, 1);
+  });
+});
+
+const LONG = 'This one sentence takes many frames to say.';
+
+test('a chunk streams its first Mimi frame alone, then groups that double up to 16', async () => {
+  const { instance, runs } = await load({ eosAt: 1000 });
+  const [chunk] = await instance.tokens(LONG);
+  const sizes = [];
+  for await (const audio of instance.stream(chunk)) sizes.push(audio.length / 2400);
+  const decoded = runs.mimi_decoder;
+  assert.deepEqual(sizes.slice(0, 6), [1, 2, 4, 8, 16, 16]);
+  assert.equal(
+    sizes.reduce((a, b) => a + b, 0),
+    chunk.frameBudget
+  );
+  assert.equal(decoded, sizes.length);
+  const whole = await instance.synthesize(chunk);
+  assert.equal(whole.length, chunk.frameBudget * 2400);
+});
+
+describe('speech streams Mimi frames from inside a chunk', () => {
+  let served;
+
+  before(async () => {
+    served = await serve({ eosAt: 1000, spinMs: 5 });
+    await (await served.post({ input: 'Hi.' })).arrayBuffer();
+  });
+  after(() => served?.server.close());
+
+  for (const format of ['pcm', 'wav']) {
+    test(`${format}: audio arrives frame by frame while the chunk is generated`, async () => {
+      served.fake.flows.length = 0;
+      const started = performance.now();
+      const response = await served.post({ input: LONG, response_format: format });
+      assert.equal(response.status, 200);
+      const arrivals = [];
+      let bytes = 0;
+      for await (const chunk of response.body) {
+        arrivals.push({ at: performance.now(), bytes: chunk.length });
+        bytes += chunk.length;
+      }
+      const flows = served.fake.flows;
+      const last = flows.at(-1);
+      const early = arrivals.filter((a) => a.at < last).reduce((n, a) => n + a.bytes, 0);
+      const report = `first bytes at ${Math.round(arrivals[0].at - started)} ms, frame 10 at ${Math.round(flows[9] - started)} ms, last frame at ${Math.round(last - started)} ms, ${early} of ${bytes} bytes before it`;
+      assert.ok(arrivals[0].at < flows[9], report);
+      assert.ok(early > bytes / 2, report);
+      assert.equal(bytes, flows.length * 4800 + (format === 'wav' ? 44 : 0));
+    });
+  }
+});
+
+describe('speed maps onto the duration conditioner when the export takes it', () => {
+  let paced;
+  let fixed;
+
+  before(async () => {
+    paced = await serve({ paced: true });
+    fixed = await serve();
+  });
+  after(() => Promise.all([paced?.server.close(), fixed?.server.close()]));
+
+  test('both conditioned graphs get duration_delta, 0 at speed 1 and clamped at the ends', async () => {
+    const expected = {
+      1: 0,
+      1.25: -2 * Math.log(1.25),
+      0.9: -2 * Math.log(0.9),
+      4: -0.6,
+      0.25: 0.5,
+    };
+    for (const [speed, delta] of Object.entries(expected)) {
+      paced.fake.deltas.length = 0;
+      const response = await paced.post({ input: 'Hi there.', speed: Number(speed) });
+      assert.equal(response.status, 200, `speed ${speed}`);
+      await response.arrayBuffer();
+      const graphs = new Set(paced.fake.deltas.map(([g]) => g));
+      assert.deepEqual([...graphs].sort(), ['flow_lm_flow', 'text_conditioner']);
+      for (const [, d] of paced.fake.deltas)
+        assert.ok(Math.abs(d - delta) < 1e-6, `${speed}: ${d}`);
+    }
+  });
+
+  test('answers 400 only outside 0.25 to 4, or for any other speed on an export without it', async () => {
+    const outside = await paced.post({ input: 'Hi.', speed: 4.5 });
+    assert.equal(outside.status, 400);
+    assert.equal((await outside.json()).error.param, 'speed');
+    const unpaced = await fixed.post({ input: 'Hi.', speed: 1.25 });
+    assert.equal(unpaced.status, 400);
+    assert.equal((await unpaced.json()).error.param, 'speed');
+    const normal = await fixed.post({ input: 'Hi.' });
+    assert.equal(normal.status, 200);
+    await normal.arrayBuffer();
+    assert.equal(fixed.fake.deltas.length, 0);
   });
 });

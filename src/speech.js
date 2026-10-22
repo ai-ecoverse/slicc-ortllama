@@ -70,20 +70,64 @@ async function within(promise, ms) {
 
 const immediate = () => new Promise((resolve) => setImmediate(resolve));
 
+function channel() {
+  const items = [];
+  let wake = null;
+  let ended = false;
+  let failure = null;
+  const notify = () => {
+    wake?.();
+    wake = null;
+  };
+  return {
+    push(item) {
+      items.push(item);
+      notify();
+    },
+    end(error = null) {
+      ended = true;
+      failure = error;
+      notify();
+    },
+    async *[Symbol.asyncIterator]() {
+      for (;;) {
+        if (items.length) yield items.shift();
+        else if (failure) throw failure;
+        else if (ended) return;
+        else await new Promise((resolve) => (wake = resolve));
+      }
+    },
+  };
+}
+
 function schedule({ resolved, runtime, request, signal, gate }) {
   const job = (fn, ready) => ignored(runtime.use(resolved, PRIORITY.speech, fn, signal, ready));
   const { voice, speed } = request;
   const sentences = resolved.engine.splits
     ? [request.input]
     : splitSentences(request.input).flatMap((s) => splitLong(s));
-  let count = 0;
+  let produced = 0;
   let previous = Promise.resolve();
+  const flushed = () => within(gate.passed(produced), FLUSH_MS).then(immediate);
+  const pieces = (model, ids) =>
+    model.stream
+      ? model.stream(ids, { voice, speed, signal })
+      : [model.synthesize(ids, { voice, speed })];
   const synthesis = (ids) => {
-    const k = count++;
-    const ready = previous.then(() => within(gate.passed(k), FLUSH_MS)).then(immediate);
-    const audio = job((model) => model.synthesize(ids, { voice, speed }), ready);
-    previous = audio.catch(() => {});
-    return audio;
+    const out = channel();
+    const done = job(async (model, _entry, pause) => {
+      for await (const audio of pieces(model, ids)) {
+        out.push(audio);
+        produced++;
+        await pause(flushed());
+      }
+    }, previous.then(flushed));
+    done.then(
+      () => out.end(),
+      (error) => out.end(error)
+    );
+    previous = done.catch(() => {});
+    return out;
   };
   const plan = (i) =>
     job(async (tts) => {
@@ -102,11 +146,12 @@ async function* synthesize(context) {
     while (planned) {
       const sentence = await planned;
       encoder ??= await context.open(sentence.rate);
-      for (const pending of sentence.audio) {
-        const bytes = await encoder.push(await pending);
-        if (bytes.length) yield bytes;
-        gate.pass();
-      }
+      for (const pieces of sentence.audio)
+        for await (const audio of pieces) {
+          const bytes = await encoder.push(audio);
+          if (bytes.length) yield bytes;
+          gate.pass();
+        }
       planned = sentence.next;
     }
     const tail = await encoder.end();
