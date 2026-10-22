@@ -5,6 +5,7 @@ import * as util from 'node:util';
 const later = (fn) => (globalThis.setImmediate ?? setTimeout)(fn);
 
 const NO_GPU = { requestAdapter: async () => null };
+const created = new Map();
 
 export function trackGpu(gpu) {
   const devices = new Set();
@@ -44,7 +45,8 @@ export async function releaseDevices(devices, waitMs = 1000) {
 
 export async function codeOf(url, { resolveUrl, fetcher = globalThis.fetch } = {}) {
   const resolve = resolveUrl ?? (await import('node:buffer')).resolveObjectURL;
-  const blob = resolve?.(url);
+  const blob = created.get(url) ?? resolve?.(url);
+  created.delete(url);
   const code = blob ? await blob.text() : await (await fetcher(url)).text();
   URL.revokeObjectURL?.(url);
   return code;
@@ -136,9 +138,19 @@ export async function withWorker(Worker, fn, target = globalThis) {
     configurable: true,
     writable: true,
   });
+  const make = URL.createObjectURL;
+  const urls = [];
+  URL.createObjectURL = (blob) => {
+    const url = make.call(URL, blob);
+    created.set(url, blob);
+    urls.push(url);
+    return url;
+  };
   try {
     return await fn();
   } finally {
+    URL.createObjectURL = make;
+    for (const url of urls) created.delete(url);
     if (saved) Object.defineProperty(target, 'Worker', saved);
     else delete target.Worker;
   }
