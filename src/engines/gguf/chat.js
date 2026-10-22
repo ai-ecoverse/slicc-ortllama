@@ -143,19 +143,51 @@ function relay(delta, emit, calls) {
   }
 }
 
+const gates = new WeakMap();
+
+export function gateOf(wllama) {
+  if (!gates.has(wllama)) {
+    const holder = { gate: null };
+    const proxy = wllama.proxy;
+    if (proxy?.wllamaAction) {
+      const action = proxy.wllamaAction.bind(proxy);
+      proxy.wllamaAction = async (name, body) => {
+        if (name === 'get_result') await holder.gate?.();
+        return action(name, body);
+      };
+    }
+    gates.set(wllama, holder);
+  }
+  return gates.get(wllama);
+}
+
 export function chunksOf(wllama, params) {
   const queue = [];
+  const stop = new AbortController();
   let wake = null;
+  let demand = null;
+  let waiting = false;
   let done = false;
+  let closed = false;
   let error = null;
   const poke = () => {
     wake?.();
     wake = null;
   };
+  const want = () => {
+    waiting = true;
+    demand?.();
+    demand = null;
+  };
+  gateOf(wllama).gate = () =>
+    waiting || closed ? Promise.resolve() : new Promise((resolve) => (demand = resolve));
+  const signals = [params.abortSignal, stop.signal].filter(Boolean);
   wllama
     .createChatCompletion({
       ...params,
+      abortSignal: AbortSignal.any(signals),
       onData(chunk) {
+        waiting = false;
         queue.push(chunk);
         poke();
       },
@@ -172,11 +204,20 @@ export function chunksOf(wllama, params) {
       }
     );
   return (async function* () {
-    for (;;) {
-      if (queue.length > 0) yield queue.shift();
-      else if (error) throw error;
-      else if (done) return;
-      else await new Promise((resolve) => (wake = resolve));
+    try {
+      for (;;) {
+        if (queue.length > 0) yield queue.shift();
+        else if (error) throw error;
+        else if (done) return;
+        else {
+          want();
+          await new Promise((resolve) => (wake = resolve));
+        }
+      }
+    } finally {
+      closed = true;
+      if (!done) stop.abort();
+      want();
     }
   })();
 }

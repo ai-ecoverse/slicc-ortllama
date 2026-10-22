@@ -155,6 +155,7 @@ export const gguf = {
     const { wllama, release } = await open(options);
     const vision = Boolean(options.info.mmproj);
     return {
+      exclusive: true,
       async chat(request, context) {
         if (!vision) noImages(request);
         return streamChat(wllama, request, context);

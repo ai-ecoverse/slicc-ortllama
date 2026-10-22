@@ -26,11 +26,12 @@ onmessage = async (e) => {
   });
 };`;
 
-async function fakeCompletion(log, params) {
+async function fakeCompletion(log, params, proxy = null) {
   log.chat.push(params);
   const chunks = log.chunks;
   const run = async (onData) => {
     for (const chunk of chunks) {
+      if (proxy) await proxy.wllamaAction('get_result', {});
       await new Promise((resolve) => {
         const timer = setTimeout(resolve, log.delay ?? 0);
         params.abortSignal?.addEventListener('abort', () => resolve(clearTimeout(timer)), {
@@ -40,6 +41,7 @@ async function fakeCompletion(log, params) {
       if (params.abortSignal?.aborted)
         throw Object.assign(new Error('Operation aborted'), { name: 'AbortError' });
       if (chunk instanceof Error) throw chunk;
+      log.produced = (log.produced ?? 0) + 1;
       onData(chunk);
     }
   };
@@ -93,6 +95,7 @@ function fakeWllama(log) {
         this.worker.postMessage({ verb: 'init' });
       });
       this.context = { n_vocab: log.vocab ?? 3, n_layer: 2, n_ctx: params.n_ctx };
+      this.proxy = { wllamaAction: async () => ({}) };
     }
 
     getLoadedContextInfo() {
@@ -100,7 +103,7 @@ function fakeWllama(log) {
     }
 
     async createChatCompletion(params) {
-      return fakeCompletion(log, params);
+      return fakeCompletion(log, params, this.proxy);
     }
 
     async createSystemOne(params) {
@@ -401,4 +404,39 @@ test('a stream aborted while it waits for its client fails cleanly, without an u
     process.off('unhandledRejection', listener);
   }
   assert.deepEqual(unhandled, []);
+});
+
+test('a GGUF stream generates its next chunk only once the client has taken the last one', async () => {
+  const log = {
+    chat: [],
+    chunks: Array.from({ length: 10 }, (_, i) => chunk({ content: `w${i} ` })),
+  };
+  const polls = [];
+  const proxy = {
+    async wllamaAction(name) {
+      polls.push(name);
+      return {};
+    },
+  };
+  const wllama = { proxy, createChatCompletion: (params) => fakeCompletion(log, params, proxy) };
+  const seen = [];
+  let held = true;
+  const result = await streamChat(
+    wllama,
+    { messages: [{ role: 'user', content: 'Go' }], tools: [], stop: [] },
+    {
+      emit(event) {
+        if (event.type === 'content') seen.push(log.produced);
+      },
+      async yieldTurn() {
+        if (!held) return;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        seen.push(`held ${log.produced}`);
+        held = false;
+      },
+    }
+  );
+  assert.equal(result.finishReason, 'stop');
+  assert.deepEqual(seen, [1, 'held 1', 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.equal(polls.length, 10);
 });
