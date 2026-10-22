@@ -79,9 +79,10 @@ if (!jspi && !process.execArgv.includes(JSPI)) {
       if (fetched) await rm(fetched, { recursive: true, force: true });
     });
 
-    const chat = (body) =>
+    const chat = (body, signal) =>
       fetch(`${server.url}/v1/chat/completions`, {
         method: 'POST',
+        signal,
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ model: MODEL, temperature: 0, max_tokens: 16, ...body }),
       });
@@ -120,6 +121,24 @@ if (!jspi && !process.execArgv.includes(JSPI)) {
       assert.ok(pieces.length >= 6, `${pieces.length} content chunks`);
       const { usage } = events.at(-1);
       assert.ok(usage.completion_tokens >= pieces.length && usage.completion_tokens <= 12);
+    });
+
+    test('keeps serving after a client drops a stream', async () => {
+      const abort = new AbortController();
+      const response = await chat(
+        {
+          stream: true,
+          max_tokens: 400,
+          messages: [{ role: 'user', content: 'Write a long story about dragons.' }],
+        },
+        abort.signal
+      );
+      const reader = response.body.getReader();
+      for (let i = 0; i < 5; i++) await reader.read();
+      abort.abort();
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const again = await chat({ messages: [{ role: 'user', content: 'Say hi.' }] });
+      assert.equal(again.status, 200);
     });
 
     test('reports the loaded model', async () => {

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { createCatalog } from '../../src/catalog.js';
+import { streamChat } from '../../src/engines/gguf/chat.js';
 import { createRuntime, startServer } from '../../src/index.js';
 import { chatMeta, decisionMeta, ggufBytes, ggufCache, projectorMeta } from './gguf.mjs';
 
@@ -24,6 +25,47 @@ onmessage = async (e) => {
     error: typeof GPUValidationError,
   });
 };`;
+
+async function fakeCompletion(log, params) {
+  log.chat.push(params);
+  const chunks = log.chunks;
+  const run = async (onData) => {
+    for (const chunk of chunks) {
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, log.delay ?? 0);
+        params.abortSignal?.addEventListener('abort', () => resolve(clearTimeout(timer)), {
+          once: true,
+        });
+      });
+      if (params.abortSignal?.aborted)
+        throw Object.assign(new Error('Operation aborted'), { name: 'AbortError' });
+      if (chunk instanceof Error) throw chunk;
+      onData(chunk);
+    }
+  };
+  if (params.onData) return run(params.onData);
+  const values = [];
+  let resolve;
+  let reject;
+  const next = () => values.push(new Promise((a, b) => ([resolve, reject] = [a, b])));
+  next();
+  const callback = (value, done, error) => {
+    if (error) return reject(error);
+    resolve([value, done]);
+    next();
+  };
+  run((chunk) => callback(chunk)).then(
+    () => callback(undefined, true),
+    (error) => callback(undefined, false, error)
+  );
+  return (async function* () {
+    for (let i = 0, done = false; !done; i++) {
+      let value;
+      [value, done] = await values[i];
+      if (value !== undefined) yield value;
+    }
+  })();
+}
 
 function fakeWllama(log) {
   class Wllama {
@@ -58,14 +100,7 @@ function fakeWllama(log) {
     }
 
     async createChatCompletion(params) {
-      log.chat.push(params);
-      const chunks = log.chunks;
-      return (async function* () {
-        for (const chunk of chunks) {
-          if (chunk instanceof Error) throw chunk;
-          yield chunk;
-        }
-      })();
+      return fakeCompletion(log, params);
     }
 
     async createSystemOne(params) {
@@ -333,4 +368,37 @@ describe('gguf engine plumbing on a fake wllama', () => {
     await runtime.close();
     assert.ok(log.exited);
   });
+});
+
+test('a stream aborted while it waits for its client fails cleanly, without an unhandled rejection', async () => {
+  const log = {
+    chat: [],
+    delay: 50,
+    chunks: Array.from({ length: 40 }, (_, i) => chunk({ content: `w${i} ` })),
+  };
+  const abort = new AbortController();
+  const unhandled = [];
+  const listener = (error) => unhandled.push(error);
+  process.on('unhandledRejection', listener);
+  let events = 0;
+  try {
+    await assert.rejects(
+      streamChat(
+        { createChatCompletion: (params) => fakeCompletion(log, params) },
+        { messages: [{ role: 'user', content: 'Go' }], tools: [], stop: [] },
+        {
+          signal: abort.signal,
+          emit() {
+            if (++events === 4) abort.abort(new Error('the client left'));
+          },
+          yieldTurn: () => new Promise((resolve) => setTimeout(resolve, 250)),
+        }
+      ),
+      /the client left/
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  } finally {
+    process.off('unhandledRejection', listener);
+  }
+  assert.deepEqual(unhandled, []);
 });

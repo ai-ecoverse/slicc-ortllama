@@ -143,6 +143,44 @@ function relay(delta, emit, calls) {
   }
 }
 
+export function chunksOf(wllama, params) {
+  const queue = [];
+  let wake = null;
+  let done = false;
+  let error = null;
+  const poke = () => {
+    wake?.();
+    wake = null;
+  };
+  wllama
+    .createChatCompletion({
+      ...params,
+      onData(chunk) {
+        queue.push(chunk);
+        poke();
+      },
+    })
+    .then(
+      () => {
+        done = true;
+        poke();
+      },
+      (e) => {
+        error = e;
+        done = true;
+        poke();
+      }
+    );
+  return (async function* () {
+    for (;;) {
+      if (queue.length > 0) yield queue.shift();
+      else if (error) throw error;
+      else if (done) return;
+      else await new Promise((resolve) => (wake = resolve));
+    }
+  })();
+}
+
 export async function streamChat(wllama, request, { signal, emit, yieldTurn = async () => {} }) {
   if (signal?.aborted) throw signal.reason;
   const params = await completionParams(request, { signal });
@@ -152,8 +190,7 @@ export async function streamChat(wllama, request, { signal, emit, yieldTurn = as
   let usage = null;
   let timings = null;
   try {
-    const stream = await wllama.createChatCompletion(params);
-    for await (const chunk of stream) {
+    for await (const chunk of chunksOf(wllama, params)) {
       if (chunk.usage) usage = chunk.usage;
       if (chunk.timings) timings = chunk.timings;
       const choice = chunk.choices?.[0];
@@ -190,8 +227,7 @@ export async function greedy(wllama, request, { tokens, top = 5 }) {
   );
   const steps = [];
   try {
-    const stream = await wllama.createChatCompletion(params);
-    for await (const chunk of stream)
+    for await (const chunk of chunksOf(wllama, params))
       for (const step of chunk.choices?.[0]?.logprobs?.content ?? []) {
         const alternatives = (step.top_logprobs ?? []).filter((t) => t.token !== step.token);
         steps.push({
