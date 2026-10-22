@@ -216,15 +216,20 @@ export const systemone = {
       });
     const local = await localWeights(backend, files, bundleFiles(info, variant));
     const gated = ministral ? gatedOrt(backend.ort) : null;
-    const kev = await loader((rel) => files.read(rel), {
-      ...local.options,
-      ort: gated?.ort ?? backend.ort,
-      ...(ministral ? {} : { variant }),
-      executionProviders: backend.executionProviders,
-      sessionOptions: backend.sessionOptions,
-      cacheName: null,
-      ...overrides,
-    }).finally(local.clear);
+    let kev;
+    try {
+      kev = await loader((rel) => files.read(rel), {
+        ...local.options,
+        ort: gated?.ort ?? backend.ort,
+        ...(ministral ? {} : { variant }),
+        executionProviders: backend.executionProviders,
+        sessionOptions: backend.sessionOptions,
+        cacheName: null,
+        ...overrides,
+      });
+    } finally {
+      await local.clear();
+    }
     if (!ministral) return serving(kev, kevjs);
     return serving(kev, kevjs, {
       exclusive: true,

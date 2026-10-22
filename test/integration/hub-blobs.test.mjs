@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { openModel } from '../../src/engines/decoder/session.js';
+import { jev } from '../../src/engines/jev.js';
 import { openSession } from '../../src/engines/parakeet.js';
 import { systemone } from '../../src/engines/systemone.js';
 import { hubFiles } from '../../src/hf/files.js';
@@ -441,6 +442,25 @@ describe('ortllama lets onnxruntime-node read 2.x external data from disk', () =
     assert.ok(seen.graph.startsWith(root), seen.graph);
     assert.equal(seen.ino, await inode(kevShared['kev-tiny/r-1/q8f32/model.onnx.data']));
     assert.equal(seen.readSync, undefined);
+    assert.deepEqual(await readdir(root), []);
+  });
+
+  test('removes the kev.js and jev-omni.js folder when the library throws at once', async () => {
+    const { cache: kevCache } = await layoutOf(2, KEV);
+    const resolved = await (await openCatalog({ env: env(kevCache) })).resolve(`${REPO}/kev-tiny`);
+    const { root, backend } = await stagingBackend();
+    const sync = (options) => {
+      assert.ok(options.filePath('r-1/q8f32/model.onnx').startsWith(root));
+      throw new Error('thrown at once');
+    };
+    const kevLibrary = async () => ({ loadKev: (_read, options) => sync(options) });
+    await assert.rejects(
+      systemone.load({ ...resolved, backend, library: kevLibrary }),
+      /thrown at once/
+    );
+    assert.deepEqual(await readdir(root), []);
+    const jevLibrary = async () => ({ loadJevOmni: (_read, options) => sync(options) });
+    await assert.rejects(jev.load({ ...resolved, backend, library: jevLibrary }), /thrown at once/);
     assert.deepEqual(await readdir(root), []);
   });
 
