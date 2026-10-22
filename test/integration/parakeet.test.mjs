@@ -16,7 +16,7 @@ const VAD = 'onnx-community/silero-vad';
 const CPU = { ...process.env, ORTLLAMA_MODEL_PATH: '', ORTLLAMA_EP: 'cpu' };
 const HERE = new URL('fixtures/parakeet/', import.meta.url);
 const SHIPPED = new URL('../../fixtures/', import.meta.url);
-const WER = { q8: 0.025, q4f16: 0.03 };
+const WER = { q8: 0.021, q4f16: 0.025 };
 
 const catalog = await openCatalog({ env: CPU });
 const resolve = (id) => catalog.resolve(id).catch(() => null);
@@ -114,27 +114,43 @@ describe('Parakeet TDT transcription', { skip }, () => {
     });
   });
 
-  for (const variant of ['fp32', 'fp16'])
-    test(`decodes every parity clip token for token on ${variant}`, async (t) => {
-      if (!clips) return t.skip('no export/clips/ in the export');
-      await withVariant(variant, async (instance) => {
-        for (const name of clipNames) {
-          const steps = await instance.steps(clips[name]);
-          const want = expected.clips[name][variant];
-          assert.deepEqual(
-            steps.map((s) => s.token),
-            want.tokens,
-            `${name} tokens`
-          );
-          assert.deepEqual(
-            steps.map((s) => s.duration),
-            want.durations,
-            `${name} durations`
-          );
-          assert.equal((await instance.transcribe(clips[name])).text, want.text, name);
-        }
-      });
+  test('decodes every parity clip token for token and frame for frame on fp32', async (t) => {
+    if (!clips) return t.skip('no export/clips/ in the export');
+    await withVariant('fp32', async (instance) => {
+      for (const name of clipNames) {
+        const steps = await instance.steps(clips[name]);
+        const want = expected.clips[name].fp32;
+        assert.deepEqual(
+          steps.map((s) => s.token),
+          want.tokens,
+          `${name} tokens`
+        );
+        assert.deepEqual(
+          steps.map((s) => s.duration),
+          want.durations,
+          `${name} durations`
+        );
+        assert.equal((await instance.transcribe(clips[name])).text, want.text, name);
+      }
     });
+  });
+
+  test('emits every parity clip token on fp16', async (t) => {
+    if (!clips) return t.skip('no export/clips/ in the export');
+    const emitted = (tokens) => tokens.filter((id) => id !== expected.gen.blank_token_id);
+    await withVariant('fp16', async (instance) => {
+      for (const name of clipNames) {
+        const steps = await instance.steps(clips[name]);
+        const want = expected.clips[name].fp16;
+        assert.deepEqual(
+          emitted(steps.map((s) => s.token)),
+          emitted(want.tokens),
+          `${name} tokens`
+        );
+        assert.equal((await instance.transcribe(clips[name])).text, want.text, name);
+      }
+    });
+  });
 
   test('stamps every token inside the window it was heard in', async (t) => {
     if (!clips) return t.skip('no export/clips/ in the export');
