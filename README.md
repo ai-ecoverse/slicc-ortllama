@@ -422,7 +422,7 @@ Each integration test runs when its models are in the Hugging Face cache; `ORTLL
 | Kokoro | `onnx-community/Kokoro-82M-v1.0-ONNX` |
 | Phonon | `ai-ecoverse/phonon-31m-en-ONNX` |
 
-Releases are published to npm from `main` by [semantic-release](https://semantic-release.gitbook.io), so commit messages follow [Conventional Commits](https://www.conventionalcommits.org).
+CI is [slicc-shared-web's pipeline](https://github.com/ai-ecoverse/slicc-shared-web#pipeline), called from `.github/workflows/ci.yml`: lint, the integration tests split over two shards, and a Claude and a Codex review on every pull request. CI has no Hugging Face cache, so only the tests that need no model run there: codecs, the server, streaming, the cache and the engines on a fake ORT. On `main` it releases to npm with [semantic-release](https://semantic-release.gitbook.io) and provenance, through npm trusted publishing from `ci.yml`, so commit messages follow [Conventional Commits](https://www.conventionalcommits.org).
 
 ## Related projects
 
