@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { open, readFile } from 'node:fs/promises';
 import { externalFiles } from '../engines/external.js';
 import { HttpError } from '../http/errors.js';
 
 const CHUNK = 16 * 1024 * 1024;
+export const WHOLE_MAX = 2 ** 31 - 2 ** 22;
 const SUBTLE = { sha1: 'SHA-1', sha256: 'SHA-256' };
 const LABEL = { sha1: 'git blob sha1', sha256: 'sha256' };
 const verified = new Map();
@@ -14,6 +15,21 @@ const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0'))
 async function streamed(path, algorithm, prefix) {
   const hash = createHash(algorithm).update(prefix);
   for await (const chunk of createReadStream(path, { highWaterMark: CHUNK })) hash.update(chunk);
+  return hash.digest('hex');
+}
+
+async function ranged(path, algorithm, prefix) {
+  const hash = createHash(algorithm).update(prefix);
+  const handle = await open(path);
+  try {
+    const buffer = new Uint8Array(CHUNK);
+    for (let at = 0, got = 1; got > 0; at += got) {
+      got = (await handle.read(buffer, 0, CHUNK, at)).bytesRead;
+      hash.update(buffer.subarray(0, got));
+    }
+  } finally {
+    await handle.close();
+  }
   return hash.digest('hex');
 }
 
@@ -32,7 +48,8 @@ async function whole(path, algorithm, prefix) {
 export async function blobDigest(blob, { read = 'stream' } = {}) {
   const algorithm = blob.etag.length === 40 ? 'sha1' : 'sha256';
   const prefix = algorithm === 'sha1' ? `blob ${blob.size}\0` : '';
-  const digest = await (read === 'whole' ? whole : streamed)(blob.path, algorithm, prefix);
+  const reader = read !== 'whole' ? streamed : blob.size > WHOLE_MAX ? ranged : whole;
+  const digest = await reader(blob.path, algorithm, prefix);
   return { algorithm, digest };
 }
 

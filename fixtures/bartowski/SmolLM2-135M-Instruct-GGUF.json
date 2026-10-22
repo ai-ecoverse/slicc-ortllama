@@ -1,0 +1,102 @@
+{
+  "model": "bartowski/SmolLM2-135M-Instruct-GGUF",
+  "variant": "Q4_0",
+  "revision": "09816acd5d99df7be770d85ea30822623dab342c",
+  "executionProviders": ["cpu"],
+  "generator": "scripts/fixtures.mjs",
+  "fixtures": [
+    {
+      "name": "capital",
+      "messages": [
+        { "role": "user", "content": "What is the capital of France? Answer in one sentence." }
+      ],
+      "text": "The capital of France is Paris.",
+      "tokens": ["The", " capital", " of", " France", " is", " Paris", "."],
+      "logprobs": [-0.3634, -0.0053, -0.0019, -0.0039, -0.0218, -0.0318, -0.3164],
+      "margins": [2.284, 6.788, 7.122, 5.807, 4.516, 5.172, 1.013]
+    },
+    {
+      "name": "haiku",
+      "messages": [
+        { "role": "system", "content": "You are a helpful assistant." },
+        { "role": "user", "content": "Write a haiku about autumn leaves." }
+      ],
+      "text": "In autumn's gentle hue,\nA symphony of leaves,\nSoft and warm, they dance,\nA symphony of",
+      "tokens": [
+        "In",
+        " autumn",
+        "'s",
+        " gentle",
+        " hue",
+        ",",
+        "\n",
+        "A",
+        " symphony",
+        " of",
+        " leaves",
+        ",",
+        "\n",
+        "Soft",
+        " and",
+        " warm",
+        ",",
+        " they",
+        " dance",
+        ",",
+        "\n",
+        "A",
+        " symphony",
+        " of"
+      ],
+      "logprobs": [
+        -1.2516, -0.8658, -0.79, -2.9409, -2.5803, -0.0936, -1.0367, -1.4463, -1.9925, -0.1139,
+        -1.2093, -1.8064, -1.0017, -1.7736, -1.2866, -2.5279, -0.2685, -1.9998, -2.2866, -1.0864,
+        -0.0226, -1.1894, -1.6806, -0.0931
+      ],
+      "margins": [
+        0.415, 0.769, 0.703, 0.451, 0.09, 2.996, 0.965, 0.521, 1.109, 3.659, 0.283, 0.585, 1.278,
+        0.496, 0.233, 0.463, 2.729, 0.189, 0.333, 1.604, 5.392, 1.054, 1.354, 3.925
+      ]
+    },
+    {
+      "name": "math",
+      "messages": [{ "role": "user", "content": "What is 17 times 23? Show the steps briefly." }],
+      "text": "To find 17 times 23, we need to multiply 23 by 23 and then add",
+      "tokens": [
+        "To",
+        " find",
+        " ",
+        "1",
+        "7",
+        " times",
+        " ",
+        "2",
+        "3",
+        ",",
+        " we",
+        " need",
+        " to",
+        " multiply",
+        " ",
+        "2",
+        "3",
+        " by",
+        " ",
+        "2",
+        "3",
+        " and",
+        " then",
+        " add"
+      ],
+      "logprobs": [
+        -0.8633, -0.4846, -0.2226, -0.008, -0.0008, -0.0956, -0.0018, -0.0002, -0.0001, -0.0238,
+        -0.45, -1.3278, -0.0134, -0.5991, -0.5491, -0.3894, -0.0018, -0.0263, -0.4648, -0.1032,
+        -0.0174, -0.8888, -0.1082, -1.2571
+      ],
+      "margins": [
+        0.446, 1.176, 1.629, 5.051, 9.104, 3.019, 7.226, 8.974, 10.533, 4.91, 1.779, 0.214, 4.673,
+        1.978, 0.734, 0.747, 7.17, 4.819, 0.68, 2.381, 4.679, 0.265, 3.456, 0.458
+      ]
+    }
+  ]
+}

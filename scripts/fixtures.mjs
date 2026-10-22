@@ -6,6 +6,7 @@ import { resample, toMono16k } from '../src/audio/pcm.js';
 import { fixtureName } from '../src/cli.js';
 import { toRecord as decisionRecord } from '../src/engines/decisions.js';
 import { fixtureRequest } from '../src/engines/decoder/index.js';
+import { CHECK_TOP, fixtureChat } from '../src/engines/gguf.js';
 import { spectrum } from '../src/engines/kokoro.js';
 import { speechProbabilities } from '../src/engines/silero.js';
 import { baseRequest } from '../src/engines/systemone.js';
@@ -262,6 +263,35 @@ async function decoderFixtures(instance) {
   return out;
 }
 
+async function ggufFixtures(instance) {
+  const out = [];
+  for (const p of PROMPTS) {
+    const steps = await instance.greedy(fixtureChat(p), TOKENS, CHECK_TOP);
+    out.push({
+      ...p,
+      text: steps.map((s) => s.token).join(''),
+      tokens: steps.map((s) => s.token),
+      logprobs: steps.map((s) => +s.logprob.toFixed(4)),
+      margins: steps.map((s) => (s.margin === null ? null : +s.margin.toFixed(3))),
+    });
+  }
+  return out;
+}
+
+async function ggufDecisionFixtures(instance) {
+  const requests = JSON.parse(
+    await readFile(new URL('./systemone-requests.json', import.meta.url), 'utf8')
+  );
+  const out = [];
+  for (const { name, request } of requests)
+    out.push({
+      name,
+      request,
+      probs: (await instance.probs(request)).map((q) => q.map((p) => +p.toFixed(5))),
+    });
+  return out;
+}
+
 async function systemoneFixtures(instance, resolved, recordOf = toRecord, minOptions = 1) {
   const requests = JSON.parse(
     await readFile(new URL('./systemone-requests.json', import.meta.url), 'utf8')
@@ -324,6 +354,8 @@ const BUILDERS = {
   phonon: phononFixtures,
   decoder: decoderFixtures,
   systemone: systemoneFixtures,
+  gguf: ggufFixtures,
+  'gguf-decisions': ggufDecisionFixtures,
   jev: (instance, resolved) => systemoneFixtures(instance, resolved, decisionRecord, 2),
 };
 

@@ -90,20 +90,20 @@ export function compareVersions(a = '0', b = '0') {
   return 0;
 }
 
-async function candidate(root, name) {
+async function candidate(root, name, file) {
   const pkg = await readJson(join(root, 'node_modules', name, 'package.json'));
   if (!pkg) return null;
-  const entry = entryOf(pkg);
+  const entry = file ?? entryOf(pkg);
   if (!entry) return null;
   const owner = await readJson(join(root, 'package.json'));
   return { root, entry, version: pkg.version, direct: Boolean(owner?.dependencies?.[name]) };
 }
 
-export async function locate(name, env = process.env, platform = process.platform) {
+export async function locate(name, env = process.env, platform = process.platform, file = null) {
   const explicit = (env.ORTLLAMA_MODULE_PATH ?? '').split(delimiter).filter(Boolean);
   const found = [];
   for (const root of await moduleRoots(env, platform)) {
-    const hit = await candidate(root, name);
+    const hit = await candidate(root, name, file);
     if (hit) found.push({ ...hit, explicit: explicit.includes(root) });
   }
   if (found.length === 0) return null;
@@ -125,14 +125,19 @@ export function missingModule(error, name) {
   );
 }
 
-async function load(name, env, importer, platform) {
+async function load(name, { env, importer, platform, entry, resolver }) {
+  const specifier = entry ? `${name}/${entry}` : name;
   try {
-    return await importer(name);
+    const module = await importer(specifier);
+    return { module, url: resolver(specifier) };
   } catch (error) {
     if (!missingModule(error, name)) throw error;
   }
-  const file = await locate(name, env, platform);
-  if (file) return importer(pathToFileURL(file).href);
+  const file = await locate(name, env, platform, entry);
+  if (file) {
+    const url = pathToFileURL(file).href;
+    return { module: await importer(url), url };
+  }
   throw new HttpError(
     501,
     `this model needs the npm package ${name}: install it next to ortllama (npm install ${name}; pnpm add -g ${name} in slicc-kernel), or add its project folder to ORTLLAMA_MODULE_PATH`,
@@ -140,22 +145,29 @@ async function load(name, env, importer, platform) {
   );
 }
 
-export function optional(
+export function optionalModule(
   name,
   {
     env = process.env,
     importer = (specifier) => import(specifier),
+    resolver = (specifier) => import.meta.resolve(specifier),
     platform = process.platform,
+    entry = null,
   } = {}
 ) {
-  if (!loaded.has(name)) {
+  const key = entry ? `${name}/${entry}` : name;
+  if (!loaded.has(key)) {
     loaded.set(
-      name,
-      load(name, env, importer, platform).catch((error) => {
-        loaded.delete(name);
+      key,
+      load(name, { env, importer, platform, entry, resolver }).catch((error) => {
+        loaded.delete(key);
         throw error;
       })
     );
   }
-  return loaded.get(name);
+  return loaded.get(key);
+}
+
+export async function optional(name, options) {
+  return (await optionalModule(name, options)).module;
 }
