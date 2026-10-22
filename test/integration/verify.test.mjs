@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { modelFiles } from '../../src/hf/files.js';
-import { verifyModel } from '../../src/hf/verify.js';
+import { blobDigest, verifyModel, WHOLE_MAX } from '../../src/hf/verify.js';
 import { startServer } from '../../src/index.js';
 import { fakeCache, fakeHome, SHA } from './cache.mjs';
 
@@ -124,4 +124,25 @@ describe('ortllama verifies the external data an ONNX graph names', () => {
     const resolved = { files, info: {}, engine: { include: () => ['onnx/*'] } };
     assert.equal(await verifyModel(resolved, { memo: new Map() }), 3);
   });
+});
+
+test('hashes a blob too large for one buffer in ranged reads when it would read whole', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ortllama-verify-big-'));
+  const path = join(dir, 'big.gguf');
+  const size = WHOLE_MAX + 2 ** 23;
+  const handle = await open(path, 'w');
+  await handle.truncate(size);
+  await handle.write(Buffer.from('end'), 0, 3, size - 3);
+  await handle.close();
+  const hash = createHash('sha256');
+  const zeros = Buffer.alloc(2 ** 24);
+  for (let left = size - 3; left > 0; left -= zeros.length)
+    hash.update(zeros.subarray(0, Math.min(left, zeros.length)));
+  const expected = hash.update('end').digest('hex');
+  try {
+    const found = await blobDigest({ path, etag: expected, size }, { read: 'whole' });
+    assert.deepEqual(found, { algorithm: 'sha256', digest: expected });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

@@ -120,6 +120,7 @@ export function modelFiles(
     async read(rel) {
       return readAll(await real(rel), readMax, chunk);
     },
+    open: async (rel) => open(await real(rel)),
     readSync(rel) {
       const data = readFileSync(realSync(rel));
       return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
