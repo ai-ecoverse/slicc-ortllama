@@ -2,18 +2,45 @@ name: CI
 
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
+  actions: read
+  issues: write
+  pull-requests: write
+  statuses: write
+  id-token: write
+  attestations: write
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   ci:
-    uses: ai-ecoverse/slicc-shared-web/.github/workflows/node-ci.yml@v1.30.8
+    uses: ai-ecoverse/slicc-shared-web/.github/workflows/pipeline.yml@v2.8.3
+    secrets: inherit
     with:
-      chromium: false
+      test-glob: test/integration/*.test.mjs
+      shards: 2
+      review-prompt: |
+        SLICC-ORTLLAMA
+
+        This repository is slicc-ortllama (`@ai-ecoverse/slicc-ortllama`): a local ONNX model server with OpenAI-style APIs (chat completions, System One, speech, transcription, realtime). The same code runs in slicc-kernel under jsh, with `onnxruntime-web` through the `slicc` condition of `#ort`, and on host Node with `onnxruntime-node`. Models come only from the Hugging Face cache. Engines live in `src/engines/`, get ORT injected, and implement `detect`, `missing`, `include`, `load`, `checkOverrides` and `check`. AGENTS.md and the README are the contract: read the sections the change touches first. `git diff origin/main...HEAD`, or `$RUNNER_TEMP/review/context/pr.diff`, is the change.
+
+        There is no certification after you: once this pull request passes the merge queue, semantic-release publishes it to npm from `main`, and slicc-kernel and its hosts pick that release up. Review it as the last check before it ships.
+
+        Look for real defects, in this order:
+        1. Correctness of the OpenAI-style APIs: request validation, error codes and shapes, streaming (SSE and the realtime WebSocket) that ends and aborts cleanly, and audio codecs that decode and encode the samples they claim to.
+        2. Security: the API key, the loopback default, paths that stay inside the Hugging Face cache and its blobs, and cached blobs that are verified before a model loads.
+        3. Both runtimes: nothing Node-only reaches the `slicc` condition, and `onnxruntime-web` and `onnxruntime-node` get the same inputs.
+        4. Compatibility for consumers: the `.` and `./pi-audio` entries, the `ortllama` CLI, and `files` shipping everything the entries load.
+        5. Tests: every behaviour change has an integration test in `test/integration/`, and a fix's test fails without the fix. Confirm that for a fix: copy the changed test files into `$RUNNER_TEMP/base` and run them there.
+        6. Repo rules: no comments anywhere, no unit tests in git (`test/unit/` is ignored), and a conventional-commit title (`fix`, `feat` and `perf` release, the rest don't).
+
+        CI has no Hugging Face cache, so tests that need a real model skip; the codec, server, streaming, cache and fake-ORT engine tests run. Run one file with `node --test --test-timeout=600000 test/integration/<file>.test.mjs`. The review browsers aren't used by this repository. Don't report style preferences, or anything you haven't confirmed in the code or by a run.
+
+        Severity: deny for a confirmed P1 or P2: a security or secret exposure, a crash or a server that doesn't start, a regression in a common request without a workaround, a behaviour change without its test, or a fix whose test passes without it. A narrow problem with a workaround is P3: comment with a repro and approve.
