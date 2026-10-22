@@ -2,6 +2,7 @@ import { posix } from 'node:path';
 import { attachImages, parseChatRequest } from '../chat.js';
 import { badRequest, HttpError } from '../http/errors.js';
 import { imageFromUrl } from '../images.js';
+import { onDisk } from './external.js';
 import { BASE_MODE, baseChat, basePrompt, gatedOrt } from './ministral-base.js';
 import { optional } from './optional.js';
 
@@ -36,17 +37,16 @@ export function heldReads(files, budget = HELD_BYTES) {
   return { read, clear };
 }
 
-async function graphsBeside(files, rels) {
-  const groups = Map.groupBy(rels, (rel) => posix.dirname(rel));
-  for (const group of groups.values())
-    if (group.some((rel) => rel.endsWith('.onnx')) && !(await files.colocated(group))) return false;
-  return true;
+async function graphGroups(files, patterns) {
+  const groups = Map.groupBy(await files.matches(patterns), (rel) => posix.dirname(rel));
+  return [...groups.values()].filter((group) => group.some((rel) => rel.endsWith('.onnx')));
 }
 
 export async function localWeights(backend, files, rels) {
   if (backend.track === 'node') {
-    const options = (await graphsBeside(files, rels)) ? { filePath: (rel) => files.path(rel) } : {};
-    return { options, clear() {} };
+    const disk = await onDisk(backend, files, await graphGroups(files, rels));
+    if (!disk) return { options: {}, clear() {} };
+    return { options: { filePath: (rel) => disk.path(rel) }, clear: disk.release };
   }
   const reads = heldReads(files);
   return { options: { readSync: reads.read }, clear: reads.clear };

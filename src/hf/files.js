@@ -102,6 +102,7 @@ export function modelFiles(
   const files = {
     root,
     path: (rel) => inside(root, rel),
+    realPath: (rel) => real(rel),
     async exists(rel) {
       try {
         return (await stat(await real(rel))).isFile();

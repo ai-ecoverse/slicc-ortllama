@@ -1,4 +1,5 @@
 import { providersFrom } from './providers.js';
+import { stageFiles } from './stage.js';
 
 const DEFAULTS = {
   'darwin/arm64': ['webgpu', 'cpu'],
@@ -60,5 +61,6 @@ export async function loadBackend({
     fallbackProviders: ['cpu'],
     availableProviders: ort.listSupportedBackends?.().map((b) => b.name) ?? null,
     sessionOptions: { preferredOutputLocation: 'cpu' },
+    stage: stageFiles,
   };
 }
