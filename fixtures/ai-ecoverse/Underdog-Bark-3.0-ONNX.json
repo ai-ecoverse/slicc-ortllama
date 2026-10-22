@@ -1,7 +1,7 @@
 {
   "model": "ai-ecoverse/Underdog-Bark-3.0-ONNX",
   "variant": "q8",
-  "revision": "5338243d8f8d8d0160633c74faed97fac885a088",
+  "revision": "31f3aba9ddbe2825ea96938ef91742ad4a12d691",
   "executionProviders": ["cpu"],
   "generator": "scripts/fixtures.mjs",
   "fixtures": [
@@ -17,7 +17,7 @@
       "file": "../audio/lighthouse.wav",
       "text": "The old lighthouse stood at the edge of the cliff for more than a hundred years. Every night its keeper climbed the narrow stairs, trimmed the wick, and watched the beam sweep across the dark water. Ships passing in the fog relied on that steady light to find their way around the rocks. One winter a storm broke the windows and flooded the lower rooms, but the keeper kept the lamp burning until morning. When the sun rose, the fishermen in the village saw the tower still standing, and they carried bread and coffee up the hill to thank him. Years later the light was replaced by an automatic beacon.",
       "wer": 0.018,
-      "heard": "The old lighthouse stood at the edge of the cliff for more than a hundred years. Every night its keeper climbed the narrow stairs, trimmed the wick, and watched the beams sweep across the dark water. Ships passing in the fog relied on that steady light to find their way around the rocks. One winter storm broke the windows and flooded the lower rooms, but the keeper kept the lamp burning until morning. When the sun rose, the fishermen in the village saw the tower still standing, and they carried bread and coffee up the hill. To thank him, years later the light was replaced by an automatic beacon."
+      "heard": "The old lighthouse stood at the edge of the cliff for more than a hundred years. Every night its keeper climbed the narrow stairs, trimmed the wick, and watched the beams sweep across the dark water. Ships passing in the fog relied on that steady light to find their way around the rocks. One winter storm broke the windows and flooded the lower rooms, but the keeper kept the lamp burning until morning. When the sun rose, the fishermen in the village saw the tower still standing, and they carried bread and coffee up the hill. To thank him, years later, the light was replaced by an automatic beacon."
     }
   ]
 }
