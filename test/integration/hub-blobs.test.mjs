@@ -1,16 +1,28 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { openModel } from '../../src/engines/decoder/session.js';
+import { jev } from '../../src/engines/jev.js';
 import { openSession } from '../../src/engines/parakeet.js';
 import { systemone } from '../../src/engines/systemone.js';
 import { hubFiles } from '../../src/hf/files.js';
 import { verifyModel } from '../../src/hf/verify.js';
 import { createRuntime, openCatalog } from '../../src/index.js';
 import { loadBackend } from '../../src/ort/node.js';
+import { loadBackend as loadWebBackend } from '../../src/ort/web.js';
 
 const SHA = 'b'.repeat(40);
 const REPO = 'test/bark';
@@ -26,19 +38,19 @@ const int = (field, n) => [...tag(field, 0), ...varint(n)];
 const msg = (field, body) => [...tag(field, 2), ...varint(body.length), ...body];
 const str = (field, s) => msg(field, [...Buffer.from(s)]);
 const entry = (key, value) => msg(13, [...str(1, key), ...str(2, value)]);
-const vector = (name) => [
+const vector = (name, n) => [
   ...str(1, name),
-  ...msg(2, msg(1, [...int(1, 1), ...msg(2, msg(1, int(1, 2)))])),
+  ...msg(2, msg(1, [...int(1, 1), ...msg(2, msg(1, int(1, n)))])),
 ];
 
-function addGraph(location) {
+function addGraph(location, n = 2) {
   const w = [
-    ...int(1, 2),
+    ...int(1, n),
     ...int(2, 1),
     ...str(8, 'w'),
     ...entry('location', location),
     ...entry('offset', '0'),
-    ...entry('length', '8'),
+    ...entry('length', String(n * 4)),
     ...int(14, 1),
   ];
   const node = msg(1, [...str(1, 'x'), ...str(1, 'w'), ...str(2, 'y'), ...str(4, 'Add')]);
@@ -46,8 +58,8 @@ function addGraph(location) {
     ...node,
     ...str(2, 'g'),
     ...msg(5, w),
-    ...msg(11, vector('x')),
-    ...msg(12, vector('y')),
+    ...msg(11, vector('x', n)),
+    ...msg(12, vector('y', n)),
   ];
   return Buffer.from([...int(1, 8), ...msg(7, graph), ...msg(8, [...str(1, ''), ...int(2, 13)])]);
 }
@@ -322,5 +334,175 @@ describe('ortllama keeps the huggingface_hub 1.x layout as it was', () => {
       seen.filePath('r-1/q8f32/model.onnx'),
       resolved.files.path('r-1/q8f32/model.onnx')
     );
+  });
+});
+
+const BIG = 4 * 1024 * 1024;
+const bigWeights = Buffer.from(Float32Array.from({ length: BIG }, (_, i) => i % 7).buffer);
+const BIG_PARAKEET = {
+  ...PARAKEET,
+  'onnx/encoder_model.onnx': addGraph('encoder_model.onnx_data', BIG),
+  'onnx/encoder_model.onnx_data': bigWeights,
+};
+const ENCODER = 'onnx/encoder_model.onnx';
+const ENCODER_DATA = 'onnx/encoder_model.onnx_data';
+
+async function stagingBackend() {
+  const real = await loadBackend();
+  const root = await mkdtemp(join(tmpdir(), 'ortllama-stage-'));
+  made.push(root);
+  const calls = [];
+  const create = async (source, options) => {
+    const beside = (name) => join(dirname(source), name);
+    const listing = await readdir(dirname(source));
+    const inodes = Object.fromEntries(
+      await Promise.all(
+        listing.map(async (name) => {
+          const info = await lstat(beside(name));
+          return [name, info.isFile() ? info.ino : null];
+        })
+      )
+    );
+    calls.push({ source, options, inodes, arrayBuffers: process.memoryUsage().arrayBuffers });
+    return real.ort.InferenceSession.create(source, options);
+  };
+  return {
+    root,
+    calls,
+    backend: {
+      ...real,
+      executionProviders: ['cpu'],
+      sessionOptions: { ...real.sessionOptions, intraOpNumThreads: 1, interOpNumThreads: 1 },
+      ort: { ...real.ort, InferenceSession: { create } },
+      stage: (files, rels) => real.stage(files, rels, root),
+    },
+  };
+}
+
+const inode = async (path) => (await stat(path)).ino;
+
+describe('ortllama lets onnxruntime-node read 2.x external data from disk', () => {
+  let cache;
+  let shared;
+  let files;
+  before(async () => {
+    ({ cache, shared } = await layoutOf(2, BIG_PARAKEET));
+    ({ files } = await (await openCatalog({ env: env(cache) })).resolve(REPO));
+  });
+
+  test('opens a Parakeet graph beside hard links to its shared blobs, with no weights in JS', async () => {
+    const { root, calls, backend } = await stagingBackend();
+    globalThis.gc?.();
+    const before = process.memoryUsage().arrayBuffers;
+    const session = await openSession(backend, files, ENCODER);
+    const [{ source, options, inodes, arrayBuffers }] = calls;
+    assert.ok(arrayBuffers - before < bigWeights.length / 2, `${arrayBuffers - before} bytes`);
+    assert.equal(Object.hasOwn(options, 'externalData'), false);
+    assert.ok(source.startsWith(root), source);
+    assert.deepEqual(inodes, {
+      'encoder_model.onnx': await inode(shared[ENCODER]),
+      'encoder_model.onnx_data': await inode(shared[ENCODER_DATA]),
+    });
+    assert.deepEqual(await readdir(root), []);
+    const { ort } = backend;
+    const x = new ort.Tensor('float32', new Float32Array(BIG).fill(1), [BIG]);
+    const y = (await session.run({ x })).y.data;
+    assert.deepEqual([y[0], y[1], y[6], y[BIG - 1]], [1, 2, 7, ((BIG - 1) % 7) + 1]);
+    await session.release();
+  });
+
+  test('opens decoder graphs the same way', async () => {
+    const { root, calls, backend } = await stagingBackend();
+    const part = { decoder: { model: ENCODER, data: [ENCODER_DATA] } };
+    const model = await openModel({ backend, files, part, shape: { layers: 0 } });
+    assert.equal(Object.hasOwn(calls[0].options, 'externalData'), false);
+    assert.ok(calls[0].source.startsWith(root), calls[0].source);
+    assert.equal(calls[0].inodes['encoder_model.onnx_data'], await inode(shared[ENCODER_DATA]));
+    assert.deepEqual(await readdir(root), []);
+    await model.release();
+  });
+
+  test('gives kev.js paths to its graphs beside their data while it loads', async () => {
+    const { cache: kevCache, shared: kevShared } = await layoutOf(2, KEV);
+    const resolved = await (await openCatalog({ env: env(kevCache) })).resolve(`${REPO}/kev-tiny`);
+    const { root, backend } = await stagingBackend();
+    let seen;
+    const library = async () => ({
+      loadKev: async (_read, options) => {
+        const graph = options.filePath('r-1/q8f32/model.onnx');
+        seen = {
+          graph,
+          ino: await inode(join(dirname(graph), 'model.onnx.data')),
+          readSync: options.readSync,
+        };
+        return { release() {} };
+      },
+    });
+    await systemone.load({ ...resolved, backend, library });
+    assert.ok(seen.graph.startsWith(root), seen.graph);
+    assert.equal(seen.ino, await inode(kevShared['kev-tiny/r-1/q8f32/model.onnx.data']));
+    assert.equal(seen.readSync, undefined);
+    assert.deepEqual(await readdir(root), []);
+  });
+
+  test('removes the kev.js and jev-omni.js folder when the library throws at once', async () => {
+    const { cache: kevCache } = await layoutOf(2, KEV);
+    const resolved = await (await openCatalog({ env: env(kevCache) })).resolve(`${REPO}/kev-tiny`);
+    const { root, backend } = await stagingBackend();
+    const sync = (options) => {
+      assert.ok(options.filePath('r-1/q8f32/model.onnx').startsWith(root));
+      throw new Error('thrown at once');
+    };
+    const kevLibrary = async () => ({ loadKev: (_read, options) => sync(options) });
+    await assert.rejects(
+      systemone.load({ ...resolved, backend, library: kevLibrary }),
+      /thrown at once/
+    );
+    assert.deepEqual(await readdir(root), []);
+    const jevLibrary = async () => ({ loadJevOmni: (_read, options) => sync(options) });
+    await assert.rejects(jev.load({ ...resolved, backend, library: jevLibrary }), /thrown at once/);
+    assert.deepEqual(await readdir(root), []);
+  });
+
+  test('falls back to handing over the bytes when it cannot link the blobs', async () => {
+    const { calls, backend } = await stagingBackend();
+    const failing = {
+      ...backend,
+      stage: async () => {
+        throw Object.assign(new Error('cross-device link'), { code: 'EXDEV' });
+      },
+    };
+    const session = await openSession(failing, files, ENCODER);
+    assert.equal(calls[0].source, files.path(ENCODER));
+    assert.equal(calls[0].options.externalData[0].path, 'encoder_model.onnx_data');
+    await session.release();
+  });
+
+  test('links nothing that the cache boundary refuses and leaves no folder behind', async () => {
+    const { cache: strayCache } = await layoutOf(2, PARAKEET, { stray: ENCODER_DATA });
+    const strayFiles = hubFiles(strayCache, REPO, snapshotOf(strayCache));
+    const { root, backend } = await stagingBackend();
+    await assert.rejects(backend.stage(strayFiles, [ENCODER, ENCODER_DATA]), { code: 'ENOENT' });
+    assert.deepEqual(await readdir(root), []);
+    await assert.rejects(openSession(backend, strayFiles, ENCODER));
+    assert.deepEqual(await readdir(root), []);
+  });
+
+  test('leaves onnxruntime-web reading the bytes itself', async () => {
+    const web = await loadWebBackend({ env: {}, gpu: undefined });
+    const calls = [];
+    const create = async (source, options) => {
+      calls.push({ bytes: source instanceof Uint8Array, external: options.externalData.length });
+      return web.ort.InferenceSession.create(source, options);
+    };
+    const backend = { ...web, ort: { ...web.ort, InferenceSession: { create } } };
+    const tiny = await (
+      await openCatalog({ env: env((await layoutOf(2, PARAKEET)).cache) })
+    ).resolve(REPO);
+    const session = await openSession(backend, tiny.files, ENCODER);
+    assert.deepEqual(calls, [{ bytes: true, external: 1 }]);
+    const x = new web.ort.Tensor('float32', new Float32Array([1, 2]), [2]);
+    assert.deepEqual([...(await session.run({ x })).y.data], [11, 22]);
+    await session.release();
   });
 });

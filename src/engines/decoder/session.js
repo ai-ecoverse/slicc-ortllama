@@ -1,5 +1,5 @@
 import { posix } from 'node:path';
-import { detachedData } from '../external.js';
+import { graphSession } from '../external.js';
 import { sliceModel } from './slice.js';
 
 let halfTable = null;
@@ -46,12 +46,9 @@ function metaOf(session, name) {
   return (session.inputMetadata ?? []).find((m) => m.name === name);
 }
 
-async function sessionFor({ ort, files, part, options, node }) {
-  if (node)
-    return ort.InferenceSession.create(files.path(part.model), {
-      ...options,
-      ...(await detachedData(files, part.model, part.data)),
-    });
+async function sessionFor({ backend, files, part, options, node }) {
+  if (node) return graphSession(backend, files, part.model, part.data, options);
+  const { ort } = backend;
   const externalData = [];
   for (const rel of part.data) {
     externalData.push({ path: posix.basename(rel), data: await files.read(rel) });
@@ -79,7 +76,7 @@ export async function openModel({ backend, files, part, shape }) {
   }
   const base = { ...backend.sessionOptions, executionProviders: backend.executionProviders };
   const embed = part.embed
-    ? await sessionFor({ ort, files, part: part.embed, options: base, node })
+    ? await sessionFor({ backend, files, part: part.embed, options: base, node })
     : null;
   const presentNames = [];
   for (let l = 0; l < shape.layers; l++)
@@ -87,7 +84,7 @@ export async function openModel({ backend, files, part, shape }) {
   let decoder;
   try {
     decoder = await sessionFor({
-      ort,
+      backend,
       files,
       part: part.decoder,
       options: { ...base, ...outputLocations(gpu, presentNames) },
@@ -189,7 +186,7 @@ export async function openModel({ backend, files, part, shape }) {
   let visionReady = null;
 
   async function encodeImage(pixels) {
-    visionSession ??= sessionFor({ ort, files, part: part.vision, options: base, node }).catch(
+    visionSession ??= sessionFor({ backend, files, part: part.vision, options: base, node }).catch(
       (error) => {
         visionSession = null;
         throw error;

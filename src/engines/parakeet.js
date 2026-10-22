@@ -2,7 +2,7 @@ import { toMono16k } from '../audio/pcm.js';
 import { badRequest } from '../http/errors.js';
 import { createParakeet } from '../parakeet/model.js';
 import { LanguageError } from '../whisper/model.js';
-import { detachedData, missingExternal } from './external.js';
+import { graphSession, missingExternal } from './external.js';
 import { createSession, externalData, WHISPER_VARIANTS, wordErrorRate } from './whisper.js';
 
 const CONFIGS = [
@@ -29,10 +29,9 @@ async function configOf(files) {
 
 export async function openSession(backend, files, rel) {
   if (backend.track !== 'node') return createSession(backend, files, rel);
-  return backend.ort.InferenceSession.create(files.path(rel), {
+  return graphSession(backend, files, rel, await externalData(files, rel), {
     executionProviders: backend.executionProviders,
     ...backend.sessionOptions,
-    ...(await detachedData(files, rel, await externalData(files, rel))),
   });
 }
 

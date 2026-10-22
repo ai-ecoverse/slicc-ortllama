@@ -24,15 +24,20 @@ export const jev = {
   async load({ backend, files, variant, info, overrides = {}, library = () => optional(JEV) }) {
     const { loadJevOmni } = await library();
     const weights = await localWeights(backend, files, bundleFiles(info, variant));
-    const model = await loadJevOmni((rel) => files.read(rel), {
-      ...weights.options,
-      ort: backend.ort,
-      variant,
-      executionProviders: backend.executionProviders,
-      sessionOptions: backend.sessionOptions,
-      cacheName: null,
-      ...overrides,
-    }).finally(weights.clear);
+    let model;
+    try {
+      model = await loadJevOmni((rel) => files.read(rel), {
+        ...weights.options,
+        ort: backend.ort,
+        variant,
+        executionProviders: backend.executionProviders,
+        sessionOptions: backend.sessionOptions,
+        cacheName: null,
+        ...overrides,
+      });
+    } finally {
+      await weights.clear();
+    }
     const run = async (record, image) => {
       const features = image ? await model.imageFeatures(image) : undefined;
       const probs = [];

@@ -121,10 +121,31 @@ export async function missingExternal(files, graphs) {
   return out;
 }
 
-export async function detachedData(files, graph, data) {
-  if (await files.colocated([graph, ...data])) return {};
+async function bytesOf(files, data) {
   const externalData = [];
   for (const rel of data)
     externalData.push({ path: posix.basename(rel), data: await files.read(rel) });
-  return { externalData };
+  return externalData;
+}
+
+export async function onDisk(backend, files, groups) {
+  let together = true;
+  for (const group of groups) together &&= await files.colocated(group);
+  if (together) return { path: files.path, release: async () => {} };
+  return (await backend.stage?.(files, groups.flat()).catch(() => null)) ?? null;
+}
+
+export async function graphSession(backend, files, graph, data, options) {
+  const { InferenceSession } = backend.ort;
+  const disk = await onDisk(backend, files, [[graph, ...data]]);
+  if (!disk)
+    return InferenceSession.create(files.path(graph), {
+      ...options,
+      externalData: await bytesOf(files, data),
+    });
+  try {
+    return await InferenceSession.create(disk.path(graph), options);
+  } finally {
+    await disk.release();
+  }
 }
