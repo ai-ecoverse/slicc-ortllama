@@ -36,9 +36,18 @@ export function heldReads(files, budget = HELD_BYTES) {
   return { read, clear };
 }
 
-export function localWeights(backend, files) {
-  if (backend.track === 'node')
-    return { options: { filePath: (rel) => files.path(rel) }, clear() {} };
+async function graphsBeside(files, rels) {
+  const groups = Map.groupBy(rels, (rel) => posix.dirname(rel));
+  for (const group of groups.values())
+    if (group.some((rel) => rel.endsWith('.onnx')) && !(await files.colocated(group))) return false;
+  return true;
+}
+
+export async function localWeights(backend, files, rels) {
+  if (backend.track === 'node') {
+    const options = (await graphsBeside(files, rels)) ? { filePath: (rel) => files.path(rel) } : {};
+    return { options, clear() {} };
+  }
   const reads = heldReads(files);
   return { options: { readSync: reads.read }, clear: reads.clear };
 }
@@ -130,7 +139,7 @@ function weights(part) {
   return part ? [part.model, ...(part.data ?? [])] : [];
 }
 
-function needed(info, variant) {
+export function needed(info, variant) {
   const { manifest } = info;
   if (info.ministral) return ministralNeeded(manifest);
   return [
@@ -200,7 +209,7 @@ export const systemone = {
       throw new HttpError(501, `this model needs ${KEV} ${MINISTRAL_KEV} or later`, {
         code: 'engine_unavailable',
       });
-    const local = localWeights(backend, files);
+    const local = await localWeights(backend, files, needed(info, variant));
     const gated = ministral ? gatedOrt(backend.ort) : null;
     const kev = await loader((rel) => files.read(rel), {
       ...local.options,

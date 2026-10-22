@@ -1,15 +1,8 @@
-import { basename, delimiter, join } from 'node:path';
+import { basename, delimiter } from 'node:path';
 import { aliasesOf } from './config.js';
 import { detectEngine, ENGINES } from './engines/index.js';
-import {
-  cachedRepos,
-  formatModelId,
-  isDir,
-  parseModelId,
-  repoDir,
-  resolveRevision,
-} from './hf/cache.js';
-import { glob, modelFiles } from './hf/files.js';
+import { cachedRepos, formatModelId, isDir, parseModelId, resolveRevision } from './hf/cache.js';
+import { glob, hubFiles, modelFiles } from './hf/files.js';
 import { badRequest, notFound } from './http/errors.js';
 
 const SAFE = /^[A-Za-z0-9._/:@=-]+$/;
@@ -30,10 +23,6 @@ export function downloadHint(repo, { revision = null, include = [] } = {}) {
 
 function prefixed(subfolder, patterns) {
   return subfolder ? patterns.map((p) => `${subfolder}/${p}`) : patterns;
-}
-
-function snapshotFiles(cache, repo, snapshot) {
-  return modelFiles(snapshot, { allow: [snapshot, join(repoDir(cache, repo), 'blobs')] });
 }
 
 async function onnxIn(files, dir) {
@@ -161,7 +150,7 @@ async function hubDirs(cache, engines) {
   for (const repo of await cachedRepos(cache)) {
     const rev = await resolveRevision(cache, repo);
     if (!rev) continue;
-    const files = snapshotFiles(cache, repo, rev.snapshot);
+    const files = hubFiles(cache, repo, rev.snapshot);
     const subId = (dir) => `${repo}/${dir}`;
     out.push(
       ...(await explore(engines, {
@@ -298,7 +287,7 @@ export function createCatalog({ cache, home, config, modelPath = [], engines = E
         throw notFound(
           `model ${id} is not in the Hugging Face cache; run: ${downloadHint(repo, { revision, include })}`
         );
-      const root = snapshotFiles(cache, repo, rev.snapshot);
+      const root = hubFiles(cache, repo, rev.snapshot);
       const files = subfolder ? root.sub(subfolder) : root;
       if (!(await isDir(files.root)))
         throw notFound(

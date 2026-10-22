@@ -1,6 +1,5 @@
-import { join } from 'node:path';
-import { hubCache, repoDir, resolveRevision } from '../../hf/cache.js';
-import { modelFiles } from '../../hf/files.js';
+import { hubCache, resolveRevision } from '../../hf/cache.js';
+import { hubFiles } from '../../hf/files.js';
 import { HttpError } from '../../http/errors.js';
 
 export const LEXICON = 'hexgrad/misaki';
@@ -239,8 +238,7 @@ export const misaki = {
   async load({ cache = hubCache(), fallback } = {}) {
     const rev = await resolveRevision(cache, LEXICON, 'main', 'dataset');
     if (!rev) throw unavailable();
-    const blobs = join(repoDir(cache, LEXICON, 'dataset'), 'blobs');
-    const files = modelFiles(rev.snapshot, { allow: [rev.snapshot, blobs] });
+    const files = hubFiles(cache, LEXICON, rev.snapshot, 'dataset');
     const lexicons = {};
     for (const [language, names] of Object.entries(FILES)) {
       if (!(await files.exists(names[0]))) continue;

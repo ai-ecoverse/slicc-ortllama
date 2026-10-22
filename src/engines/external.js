@@ -120,3 +120,11 @@ export async function missingExternal(files, graphs) {
       if (!out.includes(rel) && !(await files.exists(rel))) out.push(rel);
   return out;
 }
+
+export async function detachedData(files, graph, data) {
+  if (await files.colocated([graph, ...data])) return {};
+  const externalData = [];
+  for (const rel of data)
+    externalData.push({ path: posix.basename(rel), data: await files.read(rel) });
+  return { externalData };
+}

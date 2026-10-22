@@ -1,9 +1,12 @@
 import { readFileSync, realpathSync } from 'node:fs';
-import { readFile, realpath, stat } from 'node:fs/promises';
-import { basename, dirname, join, normalize, posix, sep } from 'node:path';
-import { isDir, listDir } from './cache.js';
+import { open, readFile, readlink, realpath, stat } from 'node:fs/promises';
+import { basename, dirname, join, normalize, posix, resolve, sep } from 'node:path';
+import { isDir, listDir, repoDir } from './cache.js';
 
 const ETAG = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const STORED = /^[0-9a-f]{64}$/;
+const READ_MAX = 2 ** 31 - 1;
+const CHUNK = 2 ** 30;
 
 function within(root, path) {
   return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
@@ -24,13 +27,54 @@ export function glob(pattern) {
   return new RegExp(`^${parts.join('.*')}$`);
 }
 
-export function modelFiles(root, { allow = [root] } = {}) {
+function stored(store, path) {
+  const name = basename(path);
+  const shard = dirname(path);
+  return (
+    store !== null &&
+    dirname(shard) === store &&
+    STORED.test(name) &&
+    basename(shard) === name.slice(0, 2)
+  );
+}
+
+function permitted(dirs, path) {
+  return dirs.slice(1).some((dir) => within(dir, path)) || stored(dirs[0], path);
+}
+
+async function readAll(path, max, chunk) {
+  const { size } = await stat(path);
+  if (size <= max) return new Uint8Array(await readFile(path));
+  const handle = await open(path);
+  try {
+    const out = new Uint8Array(size);
+    let at = 0;
+    for (let got = 1; at < size && got > 0; at += got)
+      got = (await handle.read(out, at, Math.min(chunk, size - at), at)).bytesRead;
+    return out.subarray(0, at);
+  } finally {
+    await handle.close();
+  }
+}
+
+export function hubFiles(cache, repo, snapshot, type = 'model') {
+  return modelFiles(snapshot, {
+    allow: [snapshot, join(repoDir(cache, repo, type), 'blobs')],
+    shared: join(cache, 'blobs'),
+  });
+}
+
+export function modelFiles(
+  root,
+  { allow = [root], shared = null, readMax = READ_MAX, chunk = CHUNK } = {}
+) {
   let roots;
   let rootsSync;
+  const dirs = [shared, ...allow];
   const allowed = async (path) => {
-    roots ??= Promise.all(allow.map((dir) => realpath(dir).catch(() => dir)));
+    roots ??= Promise.all(dirs.map((dir) => dir && realpath(dir).catch(() => dir)));
     const real = await realpath(path);
-    return (await roots).some((dir) => within(dir, real)) ? real : null;
+    return permitted(await roots, real) ? real : null;
   };
   const real = async (rel) => {
     const path = await allowed(inside(root, rel)).catch(() => null);
@@ -38,9 +82,9 @@ export function modelFiles(root, { allow = [root] } = {}) {
     return path;
   };
   const realSync = (rel) => {
-    rootsSync ??= allow.map((dir) => {
+    rootsSync ??= dirs.map((dir) => {
       try {
-        return realpathSync(dir);
+        return dir && realpathSync(dir);
       } catch {
         return dir;
       }
@@ -52,7 +96,7 @@ export function modelFiles(root, { allow = [root] } = {}) {
     } catch {
       throw missing(rel);
     }
-    if (!rootsSync.some((dir) => within(dir, path))) throw missing(rel);
+    if (!permitted(rootsSync, path)) throw missing(rel);
     return path;
   };
   const files = {
@@ -73,7 +117,7 @@ export function modelFiles(root, { allow = [root] } = {}) {
       return { size, mtimeMs };
     },
     async read(rel) {
-      return new Uint8Array(await readFile(await real(rel)));
+      return readAll(await real(rel), readMax, chunk);
     },
     readSync(rel) {
       const data = readFileSync(realSync(rel));
@@ -113,16 +157,32 @@ export function modelFiles(root, { allow = [root] } = {}) {
       for (const rel of await files.matches(patterns)) total += await files.size(rel);
       return total;
     },
+    async colocated(rels) {
+      const places = new Set();
+      for (const rel of rels) {
+        const path = await real(rel).catch(() => null);
+        if (path) places.add(dirname(path));
+      }
+      return places.size <= 1;
+    },
     async blob(rel) {
       const path = await real(rel);
-      const dir = dirname(path);
-      const name = basename(path);
-      if (!ETAG.test(name) || !(await roots).some((d) => d === dir && basename(d) === 'blobs'))
+      const link = inside(root, rel);
+      const target = await readlink(link).then(
+        (to) => resolve(dirname(link), to),
+        () => link
+      );
+      const name = basename(target);
+      const dir = await realpath(dirname(target));
+      if (
+        !ETAG.test(name) ||
+        !(await roots).slice(1).some((d) => d === dir && basename(d) === 'blobs')
+      )
         return null;
       const { size, mtimeMs } = await stat(path);
       return { path, etag: name, size, mtimeMs };
     },
-    sub: (rel) => modelFiles(inside(root, rel), { allow }),
+    sub: (rel) => modelFiles(inside(root, rel), { allow, shared, readMax, chunk }),
   };
   return files;
 }

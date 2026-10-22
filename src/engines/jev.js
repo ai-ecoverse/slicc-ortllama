@@ -1,7 +1,7 @@
 import { badRequest, HttpError } from '../http/errors.js';
 import { pyJsonDumps, toAnswers, toRecord, validate } from './decisions.js';
 import { optional } from './optional.js';
-import { detectBundle, localWeights, systemone } from './systemone.js';
+import { detectBundle, localWeights, needed, systemone } from './systemone.js';
 
 export const JEV = '@ai-ecoverse/jev-omni.js';
 
@@ -21,9 +21,9 @@ export const jev = {
     ),
   missing: systemone.missing,
   include: systemone.include,
-  async load({ backend, files, variant, overrides = {}, library = () => optional(JEV) }) {
+  async load({ backend, files, variant, info, overrides = {}, library = () => optional(JEV) }) {
     const { loadJevOmni } = await library();
-    const weights = localWeights(backend, files);
+    const weights = await localWeights(backend, files, needed(info, variant));
     const model = await loadJevOmni((rel) => files.read(rel), {
       ...weights.options,
       ort: backend.ort,
