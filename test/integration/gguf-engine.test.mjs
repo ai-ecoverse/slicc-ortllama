@@ -61,7 +61,10 @@ function fakeWllama(log) {
       log.chat.push(params);
       const chunks = log.chunks;
       return (async function* () {
-        for (const chunk of chunks) yield chunk;
+        for (const chunk of chunks) {
+          if (chunk instanceof Error) throw chunk;
+          yield chunk;
+        }
       })();
     }
 
@@ -292,6 +295,19 @@ describe('gguf engine plumbing on a fake wllama', () => {
     assert.deepEqual(models[0].executionProviders, ['cpu']);
     assert.equal(log.params.n_gpu_layers, 0);
     log.noGpu = false;
+  });
+
+  test('answers 507 when the wasm heap runs out', async () => {
+    log.chunks = [new Error('decode() failed: std::bad_alloc')];
+    const response = await post('/v1/chat/completions', {
+      model: 'test/chat-GGUF:Q8_0',
+      messages: [{ role: 'user', content: 'Hi' }],
+    });
+    const { error } = await response.json();
+    assert.equal(response.status, 507);
+    assert.equal(error.code, 'out_of_memory');
+    assert.match(error.message, /4 GB heap/);
+    log.chunks = CHUNKS;
   });
 
   test('names the missing split parts of a variant', async () => {

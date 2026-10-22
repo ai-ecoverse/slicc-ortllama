@@ -2,6 +2,7 @@ import { badRequest, HttpError } from '../../http/errors.js';
 import { toolCallId } from '../decoder/stream.js';
 
 const CONTEXT = /context (size|length|window)|exceeds the available context/i;
+const MEMORY = /bad_alloc|out of memory|failed to allocate/i;
 
 async function pngOf(image) {
   const { encode } = await import('fast-png');
@@ -85,6 +86,12 @@ export function failure(error, signal) {
       code: 'context_length_exceeded',
       param: 'messages',
     });
+  if (MEMORY.test(error?.message ?? ''))
+    return new HttpError(
+      507,
+      `${error.message}: the model, its projector and its context window do not fit WebAssembly's 4 GB heap; run it on WebGPU, or give it a smaller contextLength hint`,
+      { code: 'out_of_memory' }
+    );
   return error;
 }
 

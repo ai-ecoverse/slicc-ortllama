@@ -1,0 +1,94 @@
+{
+  "model": "mistralai/Ministral-3-3B-Instruct-2512-GGUF",
+  "variant": "Q4_K_M",
+  "revision": "eb599d408350ea2bb60452cb86be7c7b2fc28227",
+  "executionProviders": ["cpu"],
+  "generator": "scripts/fixtures.mjs",
+  "fixtures": [
+    {
+      "name": "capital",
+      "messages": [
+        { "role": "user", "content": "What is the capital of France? Answer in one sentence." }
+      ],
+      "text": "The capital of France is **Paris**.",
+      "tokens": ["The", " capital", " of", " France", " is", " **", "Paris", "**."],
+      "logprobs": [-0.3893, -0.0003, -0.0001, -0.0051, 0, -0.0108, -0.0006, -0.0021],
+      "margins": [1.053, 8.35, 9.447, 5.359, 11.701, 4.584, 8.166, 6.978]
+    },
+    {
+      "name": "haiku",
+      "messages": [
+        { "role": "system", "content": "You are a helpful assistant." },
+        { "role": "user", "content": "Write a haiku about autumn leaves." }
+      ],
+      "text": "Golden petals drift—\nearth whispers secrets soft,\nwinter’s quiet breath.",
+      "tokens": [
+        "Golden",
+        " pet",
+        "als",
+        " drift",
+        "—",
+        "\n",
+        "earth",
+        " whispers",
+        " secrets",
+        " soft",
+        ",\n",
+        "w",
+        "inter",
+        "’s",
+        " quiet",
+        " breath",
+        "."
+      ],
+      "logprobs": [
+        -0.8417, -1.5163, -0.0023, -0.5981, -0.3664, -0.0166, -1.5055, -1.5858, -0.6428, -0.6399,
+        -0.5666, -1.0667, -0.0696, -0.6285, -1.7068, -2.1664, -0.0664
+      ],
+      "margins": [
+        0.964, 0.176, 6.1, 1.358, 1.886, 4.404, 0.598, 0.648, 1.015, 1.275, 1.48, 1.096, 2.92,
+        2.151, 0.441, 0.185, 4.015
+      ]
+    },
+    {
+      "name": "math",
+      "messages": [{ "role": "user", "content": "What is 17 times 23? Show the steps briefly." }],
+      "text": "Here are the steps to calculate **17 × 23**:\n\n1. Break it down:\n   - **1",
+      "tokens": [
+        "Here",
+        " are",
+        " the",
+        " steps",
+        " to",
+        " calculate",
+        " **",
+        "1",
+        "7",
+        " ×",
+        " ",
+        "2",
+        "3",
+        "**:\n\n",
+        "1",
+        ".",
+        " Break",
+        " it",
+        " down",
+        ":\n",
+        "  ",
+        " -",
+        " **",
+        "1"
+      ],
+      "logprobs": [
+        -0.6238, -0.3575, -0.0003, -0.0957, -0.7428, -0.0197, -0.4193, -0.0004, 0, -0.0143, 0,
+        -0.0006, -0.0001, -0.0532, -0.0797, -0.0205, -0.2669, -0.7377, -0.002, -0.6686, -0.0004,
+        -0.7881, -0.7672, -0.1115
+      ],
+      "margins": [
+        0.875, 1.186, 9.186, 3.035, 0.488, 4.402, 0.971, 8.37, 11.372, 4.337, 14.683, 8.08, 10.235,
+        2.976, 3.783, 4.358, 1.228, 0.044, 6.602, 0.349, 9.091, 0.115, 0.091, 2.181
+      ]
+    }
+  ]
+}
