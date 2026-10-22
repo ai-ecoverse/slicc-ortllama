@@ -1,4 +1,5 @@
 import { posix } from 'node:path';
+import { detachedData } from '../external.js';
 import { sliceModel } from './slice.js';
 
 let halfTable = null;
@@ -46,7 +47,11 @@ function metaOf(session, name) {
 }
 
 async function sessionFor({ ort, files, part, options, node }) {
-  if (node) return ort.InferenceSession.create(files.path(part.model), options);
+  if (node)
+    return ort.InferenceSession.create(files.path(part.model), {
+      ...options,
+      ...(await detachedData(files, part.model, part.data)),
+    });
   const externalData = [];
   for (const rel of part.data) {
     externalData.push({ path: posix.basename(rel), data: await files.read(rel) });

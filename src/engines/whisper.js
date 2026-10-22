@@ -36,7 +36,7 @@ async function configOf(files) {
   }
 }
 
-async function externalData(files, rel) {
+export async function externalData(files, rel) {
   const out = [];
   for (const name of [`${rel}_data`, `${rel}.data`]) {
     if (await files.exists(name)) out.push(name);
