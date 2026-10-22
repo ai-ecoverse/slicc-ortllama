@@ -179,7 +179,10 @@ describe('Phonon speech', { skip }, () => {
     const fast = await seconds(1.25);
     const slow = await seconds(0.85);
     assert.ok(fast < normal * 0.92 && slow > normal * 1.05, `${fast} ${normal} ${slow} s`);
-    assert.ok((await seconds(4)) <= fast && (await seconds(0.25)) >= slow * 0.97);
+    const fastest = await seconds(4);
+    const slowest = await seconds(0.25);
+    assert.ok(fastest <= fast && slowest >= slow * 0.97, `${fastest} ${slowest} s`);
+    assert.ok(fastest > normal * 0.7 && slowest < normal * 1.35, `${fastest} ${slowest} s`);
   });
 
   test('lists Phonon as a speech model', async () => {
