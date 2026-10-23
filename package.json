@@ -23,7 +23,9 @@
   },
   "exports": {
     ".": "./src/index.js",
-    "./pi-audio": "./src/pi-audio.js"
+    "./pi-audio": "./src/pi-audio.js",
+    "./ort/node": "./src/ort/node.js",
+    "./ort/web": "./src/ort/web.js"
   },
   "files": [
     "src",

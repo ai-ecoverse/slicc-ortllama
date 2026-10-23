@@ -7,7 +7,7 @@
 A local model server: ONNX models on [ONNX Runtime](https://onnxruntime.ai), served over OpenAI-style HTTP APIs. It does chat with tools, reasoning and images, decisions, transcription (batch and realtime) and text to speech. The same code runs in two places:
 
 - **In the browser**, as a [slicc-kernel](https://github.com/ai-ecoverse/slicc-kernel) program on [slicc-jsh](https://github.com/ai-ecoverse/slicc-jsh)'s `node`, on `onnxruntime-web` (WebGPU, single-threaded WASM as the fallback), listening on the kernel's loopback. The page and the [slicc-agent](https://github.com/ai-ecoverse/slicc-agent) worker reach it as `http://<port>.kernel.localhost`.
-- **On a host**, on Node 24+ with `onnxruntime-node`.
+- **On a host**, on Node 24+ with `onnxruntime-node`. Without it, ortllama runs on `onnxruntime-web`'s single-threaded WASM, CPU only, and says so once on stderr.
 
 Models come only from the Hugging Face cache; ortllama downloads nothing. The plan and milestones are in [#2](https://github.com/ai-ecoverse/slicc-ortllama/issues/2).
 
@@ -43,6 +43,21 @@ A transcription:
 ```sh
 hf download onnx-community/whisper-tiny --include '*.json' 'onnx/encoder_model.onnx' 'onnx/decoder_model_merged.onnx'
 curl -s localhost:11435/v1/audio/transcriptions -F file=@clip.wav -F response_format=verbose_json
+```
+
+### Without onnxruntime-node
+
+When `onnxruntime-node` cannot be imported, because it is not installed or has no binary for the host, ortllama on Node falls back to `onnxruntime-web`'s single-threaded WASM backend and writes one notice to stderr with the reason. Only `wasm` (also called `cpu`) is available there: other providers in the [order](#execution-providers) are skipped, and models load as they do in slicc-kernel, reading their weights and external data into memory, so large models take more memory and run slower than on `onnxruntime-node`. `ortllama ps` shows `onnxruntime-web` as the backend.
+
+### As a library
+
+`createRuntime({ backend })` takes the function that loads the ONNX Runtime backend, and `startServer({ runtime })` serves that runtime. `@ai-ecoverse/slicc-ortllama/ort/node` and `@ai-ecoverse/slicc-ortllama/ort/web` export the two loaders, each as `loadBackend({ env })`: `ort/node` loads `onnxruntime-node`, falling back to `onnxruntime-web` as above, and `ort/web` loads `onnxruntime-web` (WebGPU when `navigator.gpu` is there, else WASM), on Node as in the browser.
+
+```js
+import { createRuntime } from '@ai-ecoverse/slicc-ortllama';
+import { loadBackend } from '@ai-ecoverse/slicc-ortllama/ort/web';
+
+const runtime = createRuntime({ backend: () => loadBackend() });
 ```
 
 ### In slicc-kernel
@@ -417,8 +432,9 @@ A model loads on one execution provider at a time, with `cpu` (`wasm` in the bro
 | Windows x64, arm64 | `cpu`, `webgpu`, `dml` | `webgpu,dml,cpu` |
 | macOS x64 | no binary | |
 | browser (`onnxruntime-web`) | `webgpu`, `wasm` | `webgpu,wasm`, or `wasm` without WebGPU |
+| Node without `onnxruntime-node` | `wasm` | `wasm` |
 
-`ortllama ps` and `GET /ortllama/ps` report, per model, the `executionProviders` it loaded on, where the order came from (`providerSource`: `env`, `hint`, `engine` or `default`) and `modelBytes`, the size on disk of the variant's files; and, as `memory`, the process's `rss`, `heapUsed`, `external` and `arrayBuffers` on Node (`null` in slicc-kernel, where `process.memoryUsage()` answers zeros). ONNX Runtime 1.30 reports no memory of its own: `onnxruntime-node` has no arena statistics and `onnxruntime-web` no GPU buffer usage, so ortllama shows none.
+`ortllama ps` and `GET /ortllama/ps` report, per model, the `backend` it runs on (`onnxruntime-node` or `onnxruntime-web`), the `executionProviders` it loaded on, where the order came from (`providerSource`: `env`, `hint`, `engine` or `default`) and `modelBytes`, the size on disk of the variant's files; and, as `memory`, the process's `rss`, `heapUsed`, `external` and `arrayBuffers` on Node (`null` in slicc-kernel, where `process.memoryUsage()` answers zeros). ONNX Runtime 1.30 reports no memory of its own: `onnxruntime-node` has no arena statistics and `onnxruntime-web` no GPU buffer usage, so ortllama shows none.
 
 ## Configuration
 
