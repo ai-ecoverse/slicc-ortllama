@@ -156,23 +156,86 @@ export async function withWorker(Worker, fn, target = globalThis) {
   }
 }
 
-export function rangeBlob(handle, size, start = 0) {
+export const CHUNK = 16 * 2 ** 20;
+export const DIRECT = 4 * 2 ** 20;
+export const KEEP = 4;
+export const DENSE = 1 / 2;
+export const NEAR = 2 ** 16;
+
+async function readAt(handle, out, position) {
+  let at = 0;
+  while (at < out.length) {
+    const { bytesRead } = await handle.read(out, at, out.length - at, position + at);
+    if (!bytesRead) break;
+    at += bytesRead;
+  }
+  return at === out.length ? out.buffer : out.slice(0, at).buffer;
+}
+
+export function chunkedReader(
+  handle,
+  size,
+  { chunk = CHUNK, direct = DIRECT, keep = KEEP, dense = DENSE, near = NEAR } = {}
+) {
+  const chunks = new Map();
+  const small = new Map();
+  let end = -1;
+  const get = (index) => {
+    let entry = chunks.get(index);
+    chunks.delete(index);
+    if (!entry) {
+      const from = index * chunk;
+      entry = readAt(handle, new Uint8Array(Math.min(chunk, size - from)), from);
+      entry.catch(() => chunks.get(index) === entry && chunks.delete(index));
+    }
+    chunks.set(index, entry);
+    if (chunks.size > keep) chunks.delete(chunks.keys().next().value);
+    return entry;
+  };
+  const warm = (from, to) => {
+    const first = Math.floor(from / chunk);
+    const last = Math.floor((to - 1) / chunk);
+    const follows = Math.abs(from - end) <= near;
+    end = to;
+    if (chunks.has(first) && chunks.has(last)) return true;
+    const used = (small.get(first) ?? 0) + to - from;
+    small.set(first, used);
+    return follows || used > chunk * dense;
+  };
   return {
-    size,
-    slice(from = 0, to = size) {
-      const a = Math.max(0, Math.min(size, from));
-      const b = Math.max(a, Math.min(size, to));
-      return rangeBlob(handle, b - a, start + a);
-    },
-    async arrayBuffer() {
-      const out = new Uint8Array(size);
-      let at = 0;
-      while (at < size) {
-        const { bytesRead } = await handle.read(out, at, size - at, start + at);
-        if (!bytesRead) break;
-        at += bytesRead;
+    async read(from, to) {
+      if (to - from >= direct || !warm(from, to))
+        return readAt(handle, new Uint8Array(to - from), from);
+      const out = new Uint8Array(to - from);
+      let at = from;
+      while (at < to) {
+        const index = Math.floor(at / chunk);
+        const offset = at - index * chunk;
+        const part = new Uint8Array(await get(index)).subarray(offset, offset + to - at);
+        if (part.length === 0) break;
+        out.set(part, at - from);
+        at += part.length;
       }
-      return at === size ? out.buffer : out.slice(0, at).buffer;
+      return at === to ? out.buffer : out.slice(0, at - from).buffer;
+    },
+    clear() {
+      chunks.clear();
+      small.clear();
+      end = -1;
     },
   };
+}
+
+export function rangeBlob(handle, size, options) {
+  const reader = chunkedReader(handle, size, options);
+  const view = (start, length) => ({
+    size: length,
+    slice(from = 0, to = length) {
+      const a = Math.max(0, Math.min(length, from));
+      const b = Math.max(a, Math.min(length, to));
+      return view(start + a, b - a);
+    },
+    arrayBuffer: () => reader.read(start, start + length),
+  });
+  return Object.assign(view(0, size), { clear: reader.clear });
 }

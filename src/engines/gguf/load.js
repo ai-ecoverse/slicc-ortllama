@@ -114,8 +114,8 @@ export async function openWllama({
     await releaseDevices(tracked.devices);
     for (const handle of handles.splice(0)) await handle.close().catch(() => {});
   };
+  const blobs = [];
   try {
-    const blobs = [];
     for (const rel of rels) {
       const handle = await files.open(rel);
       handles.push(handle);
@@ -129,7 +129,9 @@ export async function openWllama({
         jinja: true,
         ...options,
       })
-    );
+    ).finally(() => {
+      for (const blob of blobs) blob.clear();
+    });
     const context = wllama.getLoadedContextInfo();
     if (!loadedOk(context))
       throw new HttpError(
