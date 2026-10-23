@@ -176,12 +176,13 @@ async function ps(values, io) {
   else {
     if (models.length === 0) io.out.write(`ortllama on ${run.url} has no models loaded\n`);
     else {
-      const rows = [['MODEL', 'VARIANT', 'ENGINE', 'PROVIDERS', 'SIZE', 'EXPIRES']];
+      const rows = [['MODEL', 'VARIANT', 'ENGINE', 'BACKEND', 'PROVIDERS', 'SIZE', 'EXPIRES']];
       for (const m of models)
         rows.push([
           m.id,
           m.variant,
           m.engine,
+          m.backend ?? '-',
           m.executionProviders.join(','),
           megabytes(m.modelBytes),
           m.expiresAt ?? 'never',
@@ -245,6 +246,7 @@ async function check(values, positionals, io) {
   const report = {
     id: resolved.id,
     variant: resolved.variant,
+    backend: entry.backend,
     executionProviders: entry.executionProviders,
     loadMs: entry.loadMs,
     ...(found ? { fixtures: found.path, reference: found.about } : {}),
@@ -254,7 +256,7 @@ async function check(values, positionals, io) {
   if (values.json) io.out.write(`${JSON.stringify(report, null, 2)}\n`);
   else {
     io.out.write(
-      `${report.id}:${report.variant} on ${report.executionProviders.join(',')}: loaded in ${Math.round(report.loadMs)} ms, request ${Math.round(report.requestMs)} ms\n`
+      `${report.id}:${report.variant} on ${report.executionProviders.join(',')} (${report.backend}): loaded in ${Math.round(report.loadMs)} ms, request ${Math.round(report.requestMs)} ms\n`
     );
     if (report.summary) io.out.write(`${report.summary}\n`);
     const made = report.reference?.variant;

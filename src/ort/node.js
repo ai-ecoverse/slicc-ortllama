@@ -1,5 +1,6 @@
 import { providersFrom } from './providers.js';
 import { stageFiles } from './stage.js';
+import { loadBackend as loadWebBackend } from './web.js';
 
 const DEFAULTS = {
   'darwin/arm64': ['webgpu', 'cpu'],
@@ -35,10 +36,26 @@ export function withHalfInputs(ort) {
   };
 }
 
+let noticed = false;
+
+async function wasmFallback({ env, error, loadWeb = loadWebBackend, notice }) {
+  if (!noticed) {
+    noticed = true;
+    const reason = String(error.message).split('\n')[0];
+    notice(
+      `ortllama: onnxruntime-node is not available (${reason}); running on onnxruntime-web WASM, CPU only. npm install onnxruntime-node for native and GPU execution providers`
+    );
+  }
+  const web = await loadWeb({ env, gpu: null });
+  return { ...web, availableProviders: ['wasm', 'cpu'] };
+}
+
 export async function loadBackend({
   env = process.env,
   hostEnv = process.env,
   importOrt = () => import('onnxruntime-node'),
+  loadWeb,
+  notice = (message) => process.stderr.write(`${message}\n`),
   platform,
   arch,
 } = {}) {
@@ -47,9 +64,7 @@ export async function loadBackend({
   try {
     ort = await importOrt();
   } catch (error) {
-    throw new Error('ortllama on Node needs onnxruntime-node: npm install onnxruntime-node', {
-      cause: error,
-    });
+    return wasmFallback({ env, error, loadWeb, notice });
   }
   ort.env.logLevel = env.ORTLLAMA_ORT_LOG_LEVEL ?? 'error';
   return {
