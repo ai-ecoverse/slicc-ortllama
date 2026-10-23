@@ -171,13 +171,18 @@ async function opener(format, aac) {
   }
 }
 
+export async function resolveSpeech(catalog, model) {
+  const resolved = await catalog.resolve(model);
+  if (resolved.engine.capability !== 'speech')
+    throw badRequest(`model ${resolved.id} does not synthesize speech`, 'model');
+  return resolved;
+}
+
 export function speechRoute({ catalog, runtime, aac }) {
   return {
     async handle({ body, signal }) {
       const request = speechRequest(body);
-      const resolved = await catalog.resolve(request.model);
-      if (resolved.engine.capability !== 'speech')
-        throw badRequest(`model ${resolved.id} does not synthesize speech`, 'model');
+      const resolved = await resolveSpeech(catalog, request.model);
       const format = ENCODERS[request.format];
       const open = await opener(format, aac);
       return {
