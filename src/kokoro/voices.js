@@ -8,6 +8,8 @@ export const LANGUAGES = {
   p: { language: 'pt-BR' },
 };
 
+export const GENDERS = { f: 'female', m: 'male' };
+
 export const VOICES = [
   'af_heart',
   'af_alloy',

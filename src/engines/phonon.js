@@ -1,6 +1,7 @@
 import { badRequest } from '../http/errors.js';
 import { MAX_FIT_TOKENS, normalizeEnglish, plan } from '../phonon/text.js';
 import { createTokenizer } from '../phonon/tokenizer.js';
+import { gradiumVoices, voiceLanguage } from '../phonon/voices.js';
 import { spectralDistance, spectrum } from './kokoro.js';
 
 export const SAMPLE_RATE = 24000;
@@ -271,6 +272,22 @@ async function availableVoices(files, meta) {
   return voices;
 }
 
+async function listedVoices(files, { cache } = {}) {
+  const config = await files.json('config.json');
+  const names = new Set(await availableVoices(files, config.onnx));
+  const listed = config.onnx.voices.filter((v) => names.has(v.name));
+  const unknown = listed.some((v) => v.gender === undefined || v.locale === undefined);
+  const known = unknown ? await gradiumVoices(cache) : new Map();
+  return listed.map((v) => {
+    const meta = known.get(v.voice_id) ?? {};
+    return {
+      id: v.name,
+      language: voiceLanguage(v.locale ?? meta.locale, config.languages),
+      gender: v.gender ?? meta.gender ?? null,
+    };
+  });
+}
+
 export const phonon = {
   name: 'phonon',
   capability: 'speech',
@@ -318,6 +335,7 @@ export const phonon = {
     ...Object.values(info.graphs?.[variant] ?? {}),
     'voices/*',
   ],
+  voices: listedVoices,
   async load({ backend, files, variant, info, overrides = {} }) {
     const { ort } = backend;
     const graphs = info?.graphs?.[variant] ?? (await graphsFor(files, variant));

@@ -69,6 +69,7 @@ curl -s localhost:11435/v1/audio/transcriptions -F file=@clip.wav -F response_fo
 | `POST /v1/audio/transcriptions` | OpenAI's [transcription](#transcription) API, on Whisper and Parakeet TDT |
 | `GET /v1/realtime?intent=transcription` | OpenAI's [realtime transcription](#realtime-transcription) over WebSocket |
 | `POST /v1/audio/speech` | OpenAI's [text to speech](#speech), on Kokoro-82M and [Phonon 31m English](#phonon) |
+| `GET /v1/audio/voices[?model=<id>]` | the [voices](#voices) of the cached speech models, with engine, language and gender |
 | `GET /ortllama/ps` | loaded models, their [execution providers](#execution-providers) and size, and the process's memory |
 
 Errors use OpenAI's envelope, `{ "error": { "message", "type", "param", "code" } }`.
@@ -196,6 +197,18 @@ curl -s localhost:11435/v1/audio/speech -H 'content-type: application/json' \
 ```
 
 Voices are Kokoro's American (`af_*`, `am_*`) and British English (`bf_*`, `bm_*`), Spanish (`e`), French (`f`), Hindi (`h`), Italian (`i`) and Brazilian Portuguese (`p`) voices; Japanese and Chinese are left out, since they have no phonemizer here. Variants are the repo's quantizations that are in the cache (`fp32`, `fp16`, `q8`, `q8f16`, `q4`, `q4f16`, `uint8`, `uint8f16`). `fp32` is the default when it is in the cache, else the first other quantization in that order, with `fp16` last: `fp32` is the fastest on CPU, and `fp16`, though faster on WebGPU, comes out garbled there.
+
+#### Voices
+
+`GET /v1/audio/voices` lists the voices the cached speech models can speak, as `{ "object": "list", "data": [{ "id", "model", "engine", "language", "gender" }] }`, from the cache alone: nothing is loaded to answer. It takes the same API key, Host and CORS checks as the other routes.
+
+- **Kokoro.** The `voices/*.bin` in the cache that the speech route accepts, so no Japanese or Chinese. The prefix gives the language (`a` en-US, `b` en-GB, `e` es-ES, `f` fr-FR, `h` hi-IN, `i` it-IT, `p` pt-BR) and the second letter the gender (`f` female, `m` male).
+- **Phonon.** The voices that `config.json`'s `onnx` section lists and that have a `voices/<name>.bin`. The language is the voice's locale (`en-US`, `en-GB`), or the export's first language (`en`) for the character voices, and the gender is the export's. A voice the export gives no locale or gender takes them from [gradium/phonon-voices](https://huggingface.co/gradium/phonon-voices)' `voices.jsonl` when that is in the cache, else `null`.
+- **Models.** Without `model`, every cached speech model is listed once under its ID, along with any role alias that points at a speech model the list does not have (such as a pinned revision), listed under the alias. With `?model=`, that model is listed under the name asked for, and a model that is not cached, incomplete or not a speech model answers `404` or `400` as `POST /v1/audio/speech` does.
+
+```sh
+curl -s 'localhost:11435/v1/audio/voices?model=speech'
+```
 
 #### Phonemizers
 

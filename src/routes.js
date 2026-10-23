@@ -4,6 +4,7 @@ import { requestImage } from './images.js';
 import { PRIORITY } from './runtime.js';
 import { speechRoute } from './speech.js';
 import { transcriptionRoutes } from './transcription.js';
+import { voicesRoute } from './voices.js';
 
 function modelEntry(m, aliasOf = null) {
   return {
@@ -61,5 +62,6 @@ export function createRoutes({ catalog, runtime, version, maxTokens, aac }) {
     },
     ...transcriptionRoutes({ catalog, runtime, aac }),
     'POST /v1/audio/speech': speechRoute({ catalog, runtime, aac }),
+    'GET /v1/audio/voices': voicesRoute({ catalog }),
   };
 }

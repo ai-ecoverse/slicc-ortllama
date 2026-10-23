@@ -2,7 +2,7 @@ import { hubCache } from '../hf/cache.js';
 import { badRequest } from '../http/errors.js';
 import { loadPhonemizers, phonemizerOrder } from '../kokoro/phonemizers/index.js';
 import { fixPhonemes, normalizeEnglish, splitPunctuation } from '../kokoro/text.js';
-import { DEFAULT_VOICE, LANGUAGES, VOICES } from '../kokoro/voices.js';
+import { DEFAULT_VOICE, GENDERS, LANGUAGES, VOICES } from '../kokoro/voices.js';
 import { createMel } from '../whisper/mel.js';
 
 export const SAMPLE_RATE = 24000;
@@ -79,6 +79,13 @@ export const kokoro = {
     return out;
   },
   include: (_info, variant) => ['config.json', 'tokenizer.json', VARIANTS[variant], 'voices/*'],
+  async voices(files) {
+    return (await availableVoices(files)).map((id) => ({
+      id,
+      language: LANGUAGES[id[0]].language,
+      gender: GENDERS[id[1]],
+    }));
+  },
   async load({ backend, files, variant, overrides = {}, phonemizers = environmentPhonemizers }) {
     const { ort } = backend;
     const phonemizer = await phonemizers(backend.env ?? process.env);
