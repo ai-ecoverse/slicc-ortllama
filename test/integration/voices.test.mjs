@@ -12,6 +12,7 @@ const MAIN = 'c'.repeat(40);
 const OLD = 'd'.repeat(40);
 const KOKORO = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 const PHONON = 'ai-ecoverse/phonon-31m-en-ONNX';
+const MUTE = 'test/phonon-mute';
 
 async function put(cache, repo, sha, rel, content) {
   const dir = join(cache, `models--${repo.replace('/', '--')}`);
@@ -99,6 +100,18 @@ describe('GET /v1/audio/voices on a fake cache', () => {
     await phonon(cache, MAIN, PHONON_VOICES);
     await phonon(cache, OLD, [{ name: 'easton', voice_id: 'E', locale: 'en-gb', gender: 'male' }]);
     await gradium(cache);
+    await ref(cache, MUTE, MAIN);
+    await put(
+      cache,
+      MUTE,
+      MAIN,
+      'config.json',
+      JSON.stringify({ flow_lm: {}, mimi: {}, onnx: {} })
+    );
+    await put(cache, MUTE, MAIN, 'tokenizer.json', '{}');
+    for (const graph of ['text_conditioner', 'flow_lm_main', 'flow_lm_flow', 'mimi_decoder'])
+      await put(cache, MUTE, MAIN, `onnx/${graph}.onnx`, `mute ${graph}`);
+    await put(cache, MUTE, MAIN, 'voices/easton.bin', 'easton');
     home = await fakeHome({
       narrator: PHONON,
       'old-narrator': `${PHONON}@${OLD}`,
@@ -193,6 +206,12 @@ describe('GET /v1/audio/voices on a fake cache', () => {
       ['easton', 'maeve', 'azgorath']
     );
     assert.equal(phononVoices.data[0].model, `${PHONON}:fp32`);
+  });
+
+  test('lists no voices for a Phonon export whose onnx section names none', async () => {
+    const { status, data } = await list(`?model=${MUTE}`);
+    assert.equal(status, 200);
+    assert.deepEqual(data, []);
   });
 
   test('answers as the speech route does for models it cannot speak with', async () => {

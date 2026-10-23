@@ -275,7 +275,7 @@ async function availableVoices(files, meta) {
 async function listedVoices(files, { cache } = {}) {
   const config = await files.json('config.json');
   const names = new Set(await availableVoices(files, config.onnx));
-  const listed = config.onnx.voices.filter((v) => names.has(v.name));
+  const listed = (config.onnx.voices ?? []).filter((v) => names.has(v.name));
   const unknown = listed.some((v) => v.gender === undefined || v.locale === undefined);
   const known = unknown ? await gradiumVoices(cache) : new Map();
   return listed.map((v) => {
