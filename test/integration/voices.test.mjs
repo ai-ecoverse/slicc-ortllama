@@ -224,7 +224,10 @@ describe('GET /v1/audio/voices on a fake cache', () => {
     assert.equal(variant.error.code, 'variant_not_found');
     const other = await list('?model=decisions');
     assert.equal(other.status, 400);
-    assert.equal(other.error.message, 'model test/kev/kev-tiny does not synthesize speech');
+    assert.equal(
+      other.error.message,
+      'model test/kev/kev-tiny does not synthesize speech; it answers POST /v1/systemone'
+    );
     const empty = await list('?model=');
     assert.equal(empty.status, 400);
     assert.equal(empty.error.param, 'model');

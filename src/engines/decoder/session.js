@@ -46,7 +46,7 @@ function metaOf(session, name) {
   return (session.inputMetadata ?? []).find((m) => m.name === name);
 }
 
-async function sessionFor({ backend, files, part, options, node }) {
+export async function sessionFor({ backend, files, part, options, node }) {
   if (node) return graphSession(backend, files, part.model, part.data, options);
   const { ort } = backend;
   const externalData = [];

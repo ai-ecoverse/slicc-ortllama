@@ -10,12 +10,26 @@ export const capabilityOf = (resolved) => resolved.capability ?? resolved.engine
 
 export const modelName = ({ id, mode }) => (mode ? `${id}:${mode}` : id);
 
+const ROUTES = {
+  chat: 'POST /v1/chat/completions',
+  systemone: 'POST /v1/systemone',
+  transcription: 'POST /v1/audio/transcriptions',
+  speech: 'POST /v1/audio/speech',
+  embeddings: 'POST /v1/embeddings',
+};
+
+export function routeHint(resolved) {
+  const route = ROUTES[capabilityOf(resolved)];
+  return route ? `; it answers ${route}` : '';
+}
+
 function servedBy(resolved, capability) {
   const found = Object.entries(resolved.info.modes ?? {}).find(
     ([, mode]) => mode.capability === capability
   );
   if (found) return `; ${resolved.id}:${found[0]} does`;
-  return resolved.mode && resolved.engine.capability === capability ? `; ${resolved.id} does` : '';
+  if (resolved.mode && resolved.engine.capability === capability) return `; ${resolved.id} does`;
+  return routeHint(resolved);
 }
 
 export function refuse(resolved, capability, what) {

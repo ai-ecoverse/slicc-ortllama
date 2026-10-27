@@ -1,5 +1,6 @@
 import { ENCODERS } from './audio/encode.js';
 import { AudioFormatError } from './audio/pcm.js';
+import { routeHint } from './chat.js';
 import { badRequest } from './http/errors.js';
 import { splitLong, splitSentences } from './kokoro/text.js';
 import { PRIORITY } from './runtime.js';
@@ -174,7 +175,10 @@ async function opener(format, aac) {
 export async function resolveSpeech(catalog, model) {
   const resolved = await catalog.resolve(model);
   if (resolved.engine.capability !== 'speech')
-    throw badRequest(`model ${resolved.id} does not synthesize speech`, 'model');
+    throw badRequest(
+      `model ${resolved.id} does not synthesize speech${routeHint(resolved)}`,
+      'model'
+    );
   return resolved;
 }
 

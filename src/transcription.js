@@ -1,5 +1,6 @@
 import { decodeFile } from './audio/decode.js';
 import { AudioFormatError } from './audio/pcm.js';
+import { routeHint } from './chat.js';
 import { badRequest } from './http/errors.js';
 import { parseMultipart } from './http/multipart.js';
 import { PRIORITY } from './runtime.js';
@@ -66,7 +67,10 @@ export function transcriptionRoutes({ catalog, runtime, aac, decode = decodeFile
           throw badRequest(`response_format ${format} is not supported`, 'response_format');
         const resolved = await catalog.resolve(fields.model || 'transcribe');
         if (resolved.engine.capability !== 'transcription')
-          throw badRequest(`model ${resolved.id} does not transcribe audio`, 'model');
+          throw badRequest(
+            `model ${resolved.id} does not transcribe audio${routeHint(resolved)}`,
+            'model'
+          );
         let audio;
         try {
           audio = await decode(file.data, { type: file.type, name: file.filename, aac });
