@@ -142,13 +142,13 @@ function prefixes(ix, big, cum) {
     const x = ix[2 * p];
     const y = ix[2 * p + 1];
     const signs = (x ? 1 : 0) + (y ? 1 : 0);
-    const peak = x > y ? x : y;
+    const peak = Math.max(x, y);
     for (let c = 0; c < NARROW; c++) {
       const [table, limit] = SHAPES[c];
       cum[c][p + 1] = cum[c][p] + (peak > limit ? INVALID : lengths[table][(x << 4) | y] + signs);
     }
-    const ex = x > 15 ? 15 : x;
-    const ey = y > 15 ? 15 : y;
+    const ex = Math.min(x, 15);
+    const ey = Math.min(y, 15);
     const symbol = (ex << 4) | ey;
     cum[NARROW][p + 1] = cum[NARROW][p] + lengths[16][symbol] + signs;
     cum[NARROW + 1][p + 1] = cum[NARROW + 1][p] + lengths[24][symbol] + signs;
