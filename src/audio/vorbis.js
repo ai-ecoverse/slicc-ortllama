@@ -364,7 +364,7 @@ function floorCurve(floor, ys, out, half) {
     const value = ys[i];
     const highroom = range - predicted;
     const lowroom = predicted;
-    const room = (highroom < lowroom ? highroom : lowroom) * 2;
+    const room = Math.min(highroom, lowroom) * 2;
     if (value) {
       used[lo] = true;
       used[hi] = true;
