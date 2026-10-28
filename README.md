@@ -4,7 +4,7 @@
 [![CI](https://github.com/ai-ecoverse/slicc-ortllama/actions/workflows/ci.yml/badge.svg)](https://github.com/ai-ecoverse/slicc-ortllama/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/ai-ecoverse/slicc-ortllama)](LICENSE)
 
-A local model server: ONNX models on [ONNX Runtime](https://onnxruntime.ai), served over OpenAI-style HTTP APIs. It does chat with tools, reasoning and images, decisions, transcription (batch and realtime) and text to speech. The same code runs in two places:
+A local model server: ONNX models on [ONNX Runtime](https://onnxruntime.ai), served over OpenAI-style HTTP APIs. It does chat with tools, reasoning and images, decisions, embeddings, transcription (batch and realtime) and text to speech. The same code runs in two places:
 
 - **In the browser**, as a [slicc-kernel](https://github.com/ai-ecoverse/slicc-kernel) program on [slicc-jsh](https://github.com/ai-ecoverse/slicc-jsh)'s `node`, on `onnxruntime-web` (WebGPU, single-threaded WASM as the fallback), listening on the kernel's loopback. The page and the [slicc-agent](https://github.com/ai-ecoverse/slicc-agent) worker reach it as `http://<port>.kernel.localhost`.
 - **On a host**, on Node 24+ with `onnxruntime-node`. Without it, ortllama runs on `onnxruntime-web`'s single-threaded WASM, CPU only, and says so once on stderr.
@@ -78,16 +78,17 @@ const runtime = createRuntime({ backend: () => loadBackend() });
 
 | Route | |
 | --- | --- |
-| `GET /v1/models` | models and role aliases; System One models list `decisions` in `architecture.output_modalities` |
+| `GET /v1/models` | models and role aliases; System One models list `decisions` in `architecture.output_modalities`, and embedding models `embeddings`, with the sizes they can cut a vector to in `ortllama.dimensions` |
 | `POST /v1/chat/completions` | [OpenAI chat completions](#chat-completions) on the decoder engine, on [kev-ministral's base weights](#kev-ministrals-base-weights) and, experimentally, on [GGUF models](#gguf-experimental) |
 | `POST /v1/systemone` | TypeSafe's [System One](#system-one) protocol, on kev.js, jev-omni.js and, experimentally, [GGUF decision models](#gguf-experimental) |
+| `POST /v1/embeddings` | OpenAI's [embeddings](#embeddings) API, on EmbeddingGemma 2's text model |
 | `POST /v1/audio/transcriptions` | OpenAI's [transcription](#transcription) API, on Whisper and Parakeet TDT |
 | `GET /v1/realtime?intent=transcription` | OpenAI's [realtime transcription](#realtime-transcription) over WebSocket |
 | `POST /v1/audio/speech` | OpenAI's [text to speech](#speech), on Kokoro-82M and [Phonon 31m English](#phonon) |
 | `GET /v1/audio/voices[?model=<id>]` | the [voices](#voices) of the cached speech models, with engine, language and gender |
 | `GET /ortllama/ps` | loaded models, their [execution providers](#execution-providers) and size, and the process's memory |
 
-Errors use OpenAI's envelope, `{ "error": { "message", "type", "param", "code" } }`.
+Errors use OpenAI's envelope, `{ "error": { "message", "type", "param", "code" } }`. A model sent to a route it does not answer gets `400` naming the route that does, such as `model onnx-community/embeddinggemma-2-ONNX does not answer chat completions; it answers POST /v1/embeddings`.
 
 ### Chat completions
 
@@ -154,6 +155,47 @@ Its adapter was trained for webrunner's menus, and that is where it is strongest
 `decisions` stays on Kev-0.8B: kev-ministral is eight times its size, takes ten times as long to load and four times as long per request, and Kev-4B is the better general model at a smaller size. Point a client at kev-ministral for browser-agent steps. Its model card reports 69 % on Mind2Web's unseen websites, against 57.6 % for `kev-4b-vision`. The same weights with `lora_scale = 0` are the stock base model, which `/v1/chat/completions` serves from the same load as [`ai-ecoverse/kev-ministral/kev-ministral-3b:base`](#kev-ministrals-base-weights).
 
 [Jev-Omni](https://github.com/ai-ecoverse/jev-omni.js) (`ai-ecoverse/jev-omni.js/jev-omni`, Gemma 4 12B with a 256-way decision head, 13.6 GB) answers the same requests through [jev-omni.js](https://github.com/ai-ecoverse/jev-omni.js), with `@ai-ecoverse/jev-omni.js` installed. Each question is one forward pass over the state, its instructions and its options: a choice's criteria, `no` and `yes` for a noul, a score's levels. Answers, confidences and `usage` follow the same rules as Kev's. Jev-Omni takes 2 to 256 options per question, so a choice with one criterion answers `400`. An `image` is embedded once per request. On WebGPU, onnxruntime-web limits a prompt to about 8,000 tokens; a longer one answers `422` with code `context_length_exceeded`. On an M4 Max, it loads in 7.3 s on the host CPU and answers the three-question request in 3 s; on host WebGPU, 2.6–5.8 s and 0.9 s; in the kernel, 13–23 s and 1–1.2 s. Loading peaks at 13.3 GB on host WebGPU (15.9 GB on the CPU), and in the kernel at 3.3 GiB in Chrome's page process and 13 GiB in its GPU process. That needs jev-omni.js 0.2 or later: 0.1 reads every weight into memory first, which peaks at 30 GB on the host and fails to allocate in the kernel.
+
+### Embeddings
+
+`POST /v1/embeddings` is OpenAI's embeddings API, on the text model of Google's [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2) in [onnx-community's export](https://huggingface.co/onnx-community/embeddinggemma-2-ONNX). It takes `model`, `input`, `dimensions`, `encoding_format` and `user`, which is ignored, and answers `{ "object": "list", "data": [{ "object": "embedding", "index", "embedding" }], "model", "usage": { "prompt_tokens", "total_tokens" } }`.
+
+```sh
+hf download onnx-community/embeddinggemma-2-ONNX --include '*.json' 'onnx/model_quantized.onnx*'
+curl -s localhost:11435/v1/embeddings -H 'content-type: application/json' -d '{
+  "input": ["Which planet is known as the Red Planet?"], "task": "search result", "dimensions": 256
+}'
+```
+
+- **Input.** `model` defaults to the `embed` role. `input` is a string or an array of up to 2048 non-empty strings. Token IDs, as an array of numbers or of arrays of them, answer `400`: IDs belong to the tokenizer that made them, and the tiktoken IDs that OpenAI clients send, such as LangChain's `OpenAIEmbeddings` unless it has `check_embedding_ctx_length=False`, would embed as noise.
+- **Context.** An input may have 8,192 tokens, counting its prefix and the `<bos>` and `<eos>` the tokenizer adds; a longer one answers `400` with `code: "context_length_exceeded"` and its index, and is never truncated. A request takes at most 300,000 tokens in all.
+- **Dimensions.** `dimensions` is 768 (the default), 512, 256 or 128, the sizes EmbeddingGemma 2 was trained to be cut to (Matryoshka). ortllama keeps the leading dimensions and L2-normalizes them again, so the dot product stays the cosine; other values answer `400`. Queries and documents must be embedded at the same size.
+- **Encoding.** `encoding_format` is `float` (the default) or `base64`, the vector's float32 little-endian bytes, as with OpenAI.
+- **Batching.** The inputs of a request are sorted by length and run in batches of at most 32 inputs and 2,048 tokens with padding, below the 2,700 tokens a WebGPU batch takes before some kernels exceed a dispatch limit, as the model card warns. An input longer than that runs alone; 8,192 tokens ran on WebGPU on the host and on onnxruntime-web with Dawn. Between batches the request gives up the runtime, so more urgent work, such as a realtime decode, runs first, and a closed connection stops it.
+
+EmbeddingGemma 2 is trained with a task prefix in front of each text. Input that already starts with one, `task: … | query: ` or `title: … | text: `, is embedded as it is sent, whatever the fields below say. For other input, three ortllama fields build the prefix, so a client need not:
+
+| Field | Values | Prefix |
+| --- | --- | --- |
+| `task` | `search result`, `question answering`, `fact checking`, `code retrieval`, `classification`, `clustering`, `sentence similarity` | `task: {task} \| query: {text}`; `search result` when only `input_type` is set |
+| `input_type` | `query` (the default when `task` is set), `document` | a document of the four retrieval tasks, or of none, becomes `title: {title} \| text: {text}`; `classification`, `clustering` and `sentence similarity` put their task prefix on every input, as the model card says |
+| `title` | a non-empty string, or an array with a string or `null` for each input | the document's title, or its file name for code; `none` without one. Only with `input_type: "document"` |
+
+Without these fields, text is embedded unchanged, which still works but loses some precision. Other values answer `400`. `task: "search result"` with `input_type` `query` and `document` gives sentence-transformers' `Retrieval-query` and `Retrieval-document` prompts, and `code retrieval` its `CodeRetrieval`.
+
+`/v1/models` lists the model with `embeddings` in `architecture.output_modalities`, a `context_length` of 8192 and `ortllama.dimensions`. Only the text graph, `onnx/model{suffix}.onnx` with its `.onnx_data`, is loaded and fetched; the export's vision and audio encoders are neither needed nor read. Variants are its quantizations. The default is `q8` when it is cached, else the first cached of `q4`, `fp16`, `q4f16` and `fp32`. Measured on an M4 Max, against sentence-transformers on the PyTorch model in fp32, over the 12 fixture texts at 768, 256 and 128 dimensions, with the time for a query, for 32 documents (1,575 tokens) in one request and for one 7,009-token document, warm:
+
+| Variant | Download | Cosine, worst / mean | Host CPU | Host WebGPU | onnxruntime-web WebGPU (Dawn) | onnxruntime-web WASM |
+| --- | --- | --- | --- | --- | --- | --- |
+| `q8` (default) | 314 MB | 0.99991 / 0.99996 | 30 ms, 0.42 s, 4.7 s | 16 ms, 0.14 s, 2.4 s | 25 ms, 0.17 s, 2.3 s | does not load |
+| `q4` | 175 MB | 0.97801 / 0.99027 | 17 ms, 0.78 s, 6.4 s | 19 ms, 0.15 s, 2.5 s | 24 ms, 0.18 s, 2.3 s | does not load |
+| `q4f16` | 157 MB | 0.97791 / 0.99025 | 20 ms, 0.97 s, 11 s | 17 ms, 0.10 s, 1.6 s | 24 ms, 0.13 s, 1.5 s | does not load |
+| `fp16` | 543 MB | 0.99993 / 0.99997 | 19 ms, 0.86 s, 10 s | 20 ms, 0.09 s, 1.6 s | 25 ms, 0.13 s, 1.5 s | 117 ms, 11 s, 17 s for 1,759 tokens |
+| `fp32` | 1,085 MB | 1.00000 / 1.00000 | 11 ms, 0.39 s, 4.7 s | 20 ms, 0.13 s, 2.4 s | 21 ms, 0.14 s, 2.3 s | 110 ms, 10 s, 16 s for 1,759 tokens |
+
+Plus the 32 MB `tokenizer.json`. Every variant ranked every fixture query's documents as the reference did, at every size, and the Red Planet query finds Mars first. `q8` is the default rather than the `q4` that Google recommends for the browser: both run their matrix products as 4- or 8-bit `MatMulNBits` on the GPU, so `q8` is as fast on WebGPU and faster on the host CPU for longer inputs, while its vectors stay within a cosine of 0.9999 of PyTorch's where `q4`'s drift to 0.978 (the model card reports 0.988 for text), for 139 MB more. `q4f16` and `fp16` are the fastest on WebGPU for long inputs. A hint picks another default, such as `{ "hints": { "onnx-community/embeddinggemma-2-ONNX": { "variant": "q4" } } }`. Vectors from different variants are close but not the same, so an index should be built and queried with one variant.
+
+onnxruntime-web's WASM backend, which runs in slicc-kernel without WebGPU and on Node [without onnxruntime-node](#without-onnxruntime-node), has no kernel for the quantized token embedding (`GatherBlockQuantized`) that `q8`, `q4` and `q4f16` start with, so these variants answer `422` with code `model_unsupported` there, naming `fp16` and `fp32` when they are cached. Those two run, at about 5 ms a token on one thread. The onnxruntime-web WebGPU column is onnxruntime-web 1.30 on Node with the `webgpu` package (Dawn), the kernel's runtime without the browser; the kernel itself was not measured. Loading takes 0.5–1 s on the host and 0.9–1.5 s on onnxruntime-web, most of it checking the files against their ETags.
 
 ### Transcription
 
@@ -295,7 +337,7 @@ for await (const event of speak(model, { text: 'Hello.', voice: 'af_heart' }, { 
 
 ## Models
 
-ortllama downloads nothing. It reads the Hugging Face cache that [`hf download`](https://huggingface.co/docs/huggingface_hub/guides/cli) fills (`HF_HUB_CACHE`, else `HF_HOME/hub`, else `~/.cache/huggingface/hub`), through its `refs/` and `snapshots/`. A model ID is a Hub ID: `org/repo[/subfolder][@revision][:variant]`, such as `ai-ecoverse/kev.js/kev-0.8b:q8f32`. A model that isn't cached, or a cached variant with missing files, is answered with `404` and the `hf download` command that fetches it. Missing files include the external data files a decoder's, Whisper's or Parakeet's `.onnx` graphs name, read from the graphs themselves up to 16 MB each (graphs that keep weights outside are a few hundred KB; larger ones hold their weights inline), so an interrupted download is caught before the model loads, and the `hf download` command fetches them even when they are not named after their graph; a variant that isn't cached at all is answered with `404` and the variants that are, and a cached repo with no ONNX model ortllama can run, such as an MLX or PyTorch checkpoint, with `404` and no download command. When such a repo, subfolder or `ORTLLAMA_MODEL_PATH` folder does have `.onnx` files at its top, in `onnx/`, or in a subfolder that is not itself a model ortllama runs (or that subfolder's `onnx/`), such as a new export with a quantization suffix no engine knows (`onnx/decoder_model_merged_int4.onnx`) or a lone `model.onnx`, the `404` names up to three of them and points at the layouts under [Engines](#engines). `ortllama ls` notes such repos and `ORTLLAMA_MODEL_PATH` folders on stderr, but not the subfolders of one ortllama runs.
+ortllama downloads nothing. It reads the Hugging Face cache that [`hf download`](https://huggingface.co/docs/huggingface_hub/guides/cli) fills (`HF_HUB_CACHE`, else `HF_HOME/hub`, else `~/.cache/huggingface/hub`), through its `refs/` and `snapshots/`. A model ID is a Hub ID: `org/repo[/subfolder][@revision][:variant]`, such as `ai-ecoverse/kev.js/kev-0.8b:q8f32`. A model that isn't cached, or a cached variant with missing files, is answered with `404` and the `hf download` command that fetches it. Missing files include the external data files a decoder's, Whisper's, Parakeet's or embedding model's `.onnx` graphs name, read from the graphs themselves up to 16 MB each (graphs that keep weights outside are a few hundred KB; larger ones hold their weights inline), so an interrupted download is caught before the model loads, and the `hf download` command fetches them even when they are not named after their graph; a variant that isn't cached at all is answered with `404` and the variants that are, and a cached repo with no ONNX model ortllama can run, such as an MLX or PyTorch checkpoint, with `404` and no download command. When such a repo, subfolder or `ORTLLAMA_MODEL_PATH` folder does have `.onnx` files at its top, in `onnx/`, or in a subfolder that is not itself a model ortllama runs (or that subfolder's `onnx/`), such as a new export with a quantization suffix no engine knows (`onnx/decoder_model_merged_int4.onnx`) or a lone `model.onnx`, the `404` names up to three of them and points at the layouts under [Engines](#engines). `ortllama ls` notes such repos and `ORTLLAMA_MODEL_PATH` folders on stderr, but not the subfolders of one ortllama runs.
 
 huggingface_hub 2.x (hf-xet) keeps large files in a shared store, `<cache>/blobs/<2 hex>/<64 hex>`, and links the repo's `blobs/<etag>` there. ortllama reads a snapshot's files only from the snapshot, its repo's `blobs/` and that store, following symlinks; a link anywhere else, or to a store file not named like that, counts as missing. onnxruntime-node refuses external data outside its graph's real folder, and in the shared store a graph and its data sit in different folders. On a host, ortllama then hard links the checked store files into a fresh folder under the system temp folder (`TMPDIR`), with graph and data side by side, opens the session from there and removes the folder once the session exists, so ONNX Runtime reads the weights from disk as with 1.x caches and local folders, at the same memory cost. kev.js and jev-omni.js models get paths into such a folder too. Hard links need the temp folder on the same volume as the cache; where linking fails, ortllama reads the data into memory and hands it to the session, which costs about three times the weights in extra memory.
 
@@ -313,12 +355,14 @@ Clients can ask for a role instead of a model. `ortllama alias decisions <model>
 | `transcribe`, `realtime-transcribe` | [`onnx-community/whisper-tiny`](https://huggingface.co/onnx-community/whisper-tiny) |
 | `vad` | [`onnx-community/silero-vad`](https://huggingface.co/onnx-community/silero-vad) |
 | `speech` | [`onnx-community/Kokoro-82M-v1.0-ONNX`](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) |
+| `embed` | [`onnx-community/embeddinggemma-2-ONNX`](https://huggingface.co/onnx-community/embeddinggemma-2-ONNX), `q8` when it is cached |
 
 The defaults that the [quick start](#quick-start) and [speech](#speech) examples do not fetch:
 
 ```sh
 hf download ai-ecoverse/Ministral-3-3B-Reasoning-2512-ONNX --include '*.json' chat_template.jinja 'onnx/*_q4f16.onnx*' 'onnx/vision_encoder_fp16.onnx*'
 hf download onnx-community/silero-vad --include onnx/model.onnx
+hf download onnx-community/embeddinggemma-2-ONNX --include '*.json' 'onnx/model_quantized.onnx*'
 ```
 
 ### Engines
@@ -358,6 +402,8 @@ The 8B and 14B exports are ai-ecoverse's, made by the [models](https://github.co
 | `fp32` | 2,509 MB | 0.009 | 1.8 s, 0.032 / 0.018, 2.7 GB | 8.3 s, 0.026 / 0.011, 3.5 GB | does not load |
 
 The memory footprints hold for huggingface_hub 2.x's shared blob store too, as long as the temp folder is on the cache's volume; when ortllama has to read the external data into memory, `q8` peaks at 3.4 GB and `q4f16` at 2.3 GB on the host CPU. `q8` is fastest on the CPU, so it stays there on Node unless `ORTLLAMA_EP` says otherwise (the Host WebGPU column was measured with `ORTLLAMA_EP=webgpu`). On WebGPU its integer operators run in WebAssembly, which in the kernel, on one thread, makes it twenty times slower than `q4f16`: there, pick `q4f16` with a hint such as `{ "hints": { "ai-ecoverse/Underdog-Bark-3.0-ONNX": { "variant": "q4f16" } } }`. `fp32`'s 2.4 GB weights file is more than the kernel reads at once. `ortllama alias transcribe ai-ecoverse/Underdog-Bark-3.0-ONNX` makes it the transcription role's model; on the two English `check` clips it gets 2 of 119 words wrong, as against 4 for `whisper-tiny`.
+
+- **Embedding.** Runs EmbeddingGemma 2 exports in the transformers.js layout (`config.json` with `model_type: "embedding_gemma2"` or `architectures: ["EmbeddingGemma2Model"]`, `tokenizer.json`, and `onnx/model{suffix}.onnx` with the external data `transformers.js_config.use_external_data_format` names) for [`/v1/embeddings`](#embeddings). Variants are `q8`, `q4`, `fp16`, `q4f16` and `fp32` (`_quantized`, `_q4`, `_fp16`, `_q4f16`, no suffix), the ones whose text graph is cached. The graph's `sentence_embedding` output, mean-pooled, projected to 768 dimensions and normalized inside the export, is the vector; its image, video and audio feature inputs get empty tensors, so a text-only download runs and the vision and audio encoders are never loaded. The decoder does not claim the export, whose `model*.onnx` is not a causal language model. A family is a small table in `src/engines/embedding.js` (detection, context window, dimensions, variants, prefixes, `check` thresholds), so EmbeddingGemma 1 or another text embedding export is one more entry.
 
 ### GGUF (experimental)
 
@@ -410,10 +456,11 @@ A model whose library is missing is still listed, and requests for it answer `50
 | kokoro | 3 sentences as token IDs, so the phonemizer does not matter, with a 40-band log-mel summary | the mel spectrogram stays within 2 dB and the length within 5 %; phonemes are compared and reported |
 | phonon | 3 sentences as text and token IDs, synthesized without sampling noise, with a 40-band log-mel summary | the token IDs match, and the mel spectrogram stays within 2 dB and the length within 5 % |
 | silero | speech probabilities for every 32 ms frame of two clips | mean change ≤ 0.01, at most 0.1, and no clear speech/silence flip |
+| embedding | 12 texts (4 queries and 8 documents, 3 of them code, one German) with their prompts and sentence-transformers vectors from the PyTorch model in fp32, at 768, 256 and 128 dimensions, and the reference's ranking of the documents for 2 of the queries | the prompts and token counts are the reference's, every vector keeps a cosine to the reference of at least the variant's threshold (`fp32` 0.9999, `fp16` and `q8` 0.999, `q4` and `q4f16` 0.97), and every ranking keeps its top document at every size |
 | gguf | the decoder's 3 prompts, with the reference's greedy tokens (as text), their log-probabilities and the margin to the runner-up among the top 5 | generated greedily (wllama has no teacher forcing), every token up to and including the first step whose reference margin is 1 nat or less matches, with a mean log-probability within 0.15 nats |
 | gguf-decisions | the 12 System One requests, with llama.cpp's decision probabilities | as for systemone |
 
-The tolerances leave room over what WebGPU differs from CPU, measured on host Node and in slicc-kernel (both alike): decoder mean 0.026–0.063 nats (max 0.48, flips only below a 0.55 margin; Ministral 3 3B to 14B), System One mean 0.006 (max 0.027 for Kev, 0.051 for kev-ministral), kev-ministral's base weights 2 of 96 tokens on host WebGPU, Kokoro 0.15–0.24 dB, Phonon 0.00 dB (host WebGPU, kernel WASM and WebGPU), Whisper and Silero none. Kokoro's `q8` variant lands at 2–5 dB and its `fp16` on WebGPU, which sounds garbled, at 25 dB. Phonon's `q8` lands at 1.2–1.8 dB on kernel WASM; on the host CPU it lands at 0.8 dB but ends `museum` one frame early, which counts as 10 dB. Its `fp16` lands at 8–9 dB on kernel WebGPU. Fixtures hold the default variant; other variants can fall outside them, and `check` says so. `node scripts/fixtures.mjs <model>…` writes them on the host CPU (`node scripts/fixtures.mjs audio` makes the clips with Kokoro).
+The tolerances leave room over what WebGPU differs from CPU, measured on host Node and in slicc-kernel (both alike): decoder mean 0.026–0.063 nats (max 0.48, flips only below a 0.55 margin; Ministral 3 3B to 14B), System One mean 0.006 (max 0.027 for Kev, 0.051 for kev-ministral), kev-ministral's base weights 2 of 96 tokens on host WebGPU, Kokoro 0.15–0.24 dB, Phonon 0.00 dB (host WebGPU, kernel WASM and WebGPU), Whisper and Silero none. Kokoro's `q8` variant lands at 2–5 dB and its `fp16` on WebGPU, which sounds garbled, at 25 dB. Phonon's `q8` lands at 1.2–1.8 dB on kernel WASM; on the host CPU it lands at 0.8 dB but ends `museum` one frame early, which counts as 10 dB. Its `fp16` lands at 8–9 dB on kernel WebGPU. Fixtures hold the default variant; other variants can fall outside them, and `check` says so. `node scripts/fixtures.mjs <model>…` writes them on the host CPU (`node scripts/fixtures.mjs audio` makes the clips with Kokoro). The embedding fixtures come from PyTorch instead: `uv run --python 3.12 --with torch --with torchvision --with pillow --with 'sentence-transformers>=6.1.0' scripts/embedding-fixtures.py` writes them with `google/embeddinggemma-2` in fp32 on the CPU, and `npx biome format --write fixtures/onnx-community/embeddinggemma-2-ONNX.json` formats them.
 
 ## Execution providers
 
@@ -479,6 +526,7 @@ Each integration test runs when its models are in the Hugging Face cache; `ORTLL
 | Images | `mistralai/Ministral-3-3B-Instruct-2512-ONNX:q4f16` with its vision encoder, `ai-ecoverse/kev.js/kev-0.8b-vision` |
 | Kokoro | `onnx-community/Kokoro-82M-v1.0-ONNX` |
 | Phonon | `ai-ecoverse/phonon-31m-en-ONNX` |
+| Embeddings | `onnx-community/embeddinggemma-2-ONNX` (its default variant, and `fp32` for the WASM test when it is cached) |
 | GGUF chat | `bartowski/SmolLM2-135M-Instruct-GGUF` at revision `09816ac` (`Q4_0`, 92 MB; CI downloads it into a temporary cache) |
 | GGUF images, GGUF System One | `mistralai/Ministral-3-3B-Instruct-2512-GGUF:Q4_K_M` with its `BF16-mmproj`, `ggml-org/Laya-GGUF:Q8_0` |
 
@@ -508,7 +556,8 @@ CI is [slicc-shared-web's pipeline](https://github.com/ai-ecoverse/slicc-shared-
 - [huggingface.js](https://github.com/huggingface/huggingface.js) and [tokenizers.js](https://github.com/huggingface/tokenizers.js): chat templates and tokenizers.
 - [Kev](https://github.com/jaredpalmer/kev): the decision models kev.js runs.
 - [Underdog Bark 3.0](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0) by Conway Research, from NVIDIA's [parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) and Moondream's [parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra), all CC-BY-4.0: the model the Parakeet TDT engine runs.
-- [Ministral 3](https://huggingface.co/collections/mistralai/ministral-3), [Whisper](https://github.com/openai/whisper), [Silero VAD](https://github.com/snakers4/silero-vad) and [Kokoro](https://github.com/hexgrad/kokoro): the default models.
+- [Ministral 3](https://huggingface.co/collections/mistralai/ministral-3), [Whisper](https://github.com/openai/whisper), [Silero VAD](https://github.com/snakers4/silero-vad), [Kokoro](https://github.com/hexgrad/kokoro) and [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2): the default models.
+- [sentence-transformers](https://github.com/huggingface/sentence-transformers): the reference the embedding fixtures come from.
 - [Phonon](https://github.com/gradium-ai/xn-ptts) (Gradium, built on Kyutai's [Pocket TTS](https://github.com/kyutai-labs/pocket-tts)): the `phonon` speech engine's model, and `ptts`, its reference runtime.
 - [jSquash](https://github.com/jamsinclair/jSquash): libwebp in WebAssembly for WebP images.
 

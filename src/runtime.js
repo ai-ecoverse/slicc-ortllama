@@ -1,7 +1,15 @@
 import { verifyModel } from './hf/verify.js';
 import { providerAttempts, providerOrder } from './ort/providers.js';
 
-export const PRIORITY = { expire: -1, realtime: 0, speech: 1, decisions: 2, chat: 3, admin: 4 };
+export const PRIORITY = {
+  expire: -1,
+  realtime: 0,
+  speech: 1,
+  decisions: 2,
+  chat: 3,
+  embeddings: 3,
+  admin: 4,
+};
 
 function abortError(signal) {
   return signal?.reason instanceof Error

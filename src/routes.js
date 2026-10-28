@@ -1,4 +1,5 @@
 import { chatRoute, refuse } from './chat.js';
+import { embeddingsRoute } from './embeddings.js';
 import { badRequest } from './http/errors.js';
 import { requestImage } from './images.js';
 import { PRIORITY } from './runtime.js';
@@ -42,6 +43,7 @@ export function createRoutes({ catalog, runtime, version, maxTokens, aac }) {
     },
     'GET /ortllama/ps': { handle: () => ({ models: runtime.ps(), memory: runtime.memory() }) },
     'POST /v1/chat/completions': chatRoute({ catalog, runtime, maxTokens }),
+    'POST /v1/embeddings': embeddingsRoute({ catalog, runtime }),
     'POST /v1/systemone': {
       async handle({ body, signal }) {
         if (typeof body !== 'object' || body === null || Array.isArray(body))

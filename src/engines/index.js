@@ -1,4 +1,5 @@
 import { decoder } from './decoder/index.js';
+import { embedding } from './embedding.js';
 import { gguf, ggufDecisions } from './gguf.js';
 import { jev } from './jev.js';
 import { kokoro } from './kokoro.js';
@@ -16,6 +17,7 @@ export const ENGINES = [
   silero,
   kokoro,
   phonon,
+  embedding,
   decoder,
   ggufDecisions,
   gguf,

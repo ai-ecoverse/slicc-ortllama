@@ -10,6 +10,7 @@ export const ROLES = [
   'realtime-transcribe',
   'speech',
   'vad',
+  'embed',
 ];
 
 export const DEFAULT_ALIASES = {
@@ -20,6 +21,7 @@ export const DEFAULT_ALIASES = {
   'realtime-transcribe': 'onnx-community/whisper-tiny',
   vad: 'onnx-community/silero-vad',
   speech: 'onnx-community/Kokoro-82M-v1.0-ONNX',
+  embed: 'onnx-community/embeddinggemma-2-ONNX',
 };
 
 export const DEFAULT_PORT = 11435;

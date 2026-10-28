@@ -63,7 +63,7 @@ async function probeData(files, dir, name) {
   return out;
 }
 
-async function part(files, external, dir, name) {
+export async function part(files, external, dir, name) {
   const data = dataFiles(external, name) ?? (await probeData(files, dir, name));
   return { model: `${dir}${name}`, data: data.map((d) => `${dir}${d}`) };
 }

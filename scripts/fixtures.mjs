@@ -346,6 +346,11 @@ async function baseFixtures(instance) {
 }
 
 const BUILDERS = {
+  embedding: () => {
+    throw new Error(
+      'embedding fixtures come from the PyTorch model: run scripts/embedding-fixtures.py'
+    );
+  },
   base: baseFixtures,
   whisper: whisperFixtures,
   parakeet: parakeetFixtures,
