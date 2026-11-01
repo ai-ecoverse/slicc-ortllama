@@ -55,7 +55,7 @@
     "espeak-ng": "1.0.2",
     "lefthook": "2.2.2",
     "mediabunny": "1.62.1",
-    "monocart-coverage-reports": "2.13.2",
+    "monocart-coverage-reports": "3.0.0",
     "onnxruntime-node": "1.30.0",
     "phonemize": "2.0.1",
     "phonemizer": "1.2.1",
