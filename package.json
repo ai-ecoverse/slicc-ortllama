@@ -71,7 +71,7 @@
     "jpeg-js": "0.4.4",
     "libopus-wasm": "0.4.1",
     "onnxruntime-web": "1.31.1",
-    "ws": "8.22.0"
+    "ws": "8.22.1"
   },
   "bin": {
     "ortllama": "src/bin.js"
