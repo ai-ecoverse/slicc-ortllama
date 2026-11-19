@@ -48,7 +48,7 @@
     "@ai-ecoverse/slicc-shared-web": "2.15.0",
     "@audio/decode-aac": "1.6.0",
     "@audio/encode-aac": "1.2.1",
-    "@biomejs/biome": "2.6.6",
+    "@biomejs/biome": "2.6.7",
     "@earendil-works/pi-ai": "1.5.2",
     "@mediabunny/aac-encoder": "1.65.2",
     "@wllama/wllama": "3.13.0",
